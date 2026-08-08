@@ -7,7 +7,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGED_REGISTRY = PROJECT_ROOT / "market_cli" / "data" / "registry.json"
 
@@ -37,19 +36,40 @@ def test_pinned_akshare_registry_is_complete_and_reproducible(tmp_path: Path) ->
 
     assert result.returncode == 0
     summary = json.loads(result.stdout)
-    assert summary["commands"] == 1090
+    assert summary["commands"] == 1101
     assert summary["excluded"] == 3
 
     registry = json.loads(generated_registry.read_text(encoding="utf-8"))
     assert Counter(command["path"][0] for command in registry["commands"]) == {
         "alternative": 75,
         "bond": 49,
+        "calendar": 1,
         "fund": 94,
         "futures": 92,
         "fx": 15,
-        "index": 95,
+        "index": 99,
         "macro": 225,
         "option": 46,
-        "stock": 399,
+        "stock": 405,
+    }
+    assert sum(
+        command["stability"] == "upstream" for command in registry["commands"]
+    ) == 1090
+    assert {
+        tuple(command["path"])
+        for command in registry["commands"]
+        if command["stability"] == "stable"
+    } == {
+        ("stock", "instruments"),
+        ("stock", "quotes"),
+        ("stock", "bars"),
+        ("stock", "profiles"),
+        ("stock", "financials"),
+        ("stock", "corporate-actions"),
+        ("calendar", "trading-days"),
+        ("index", "instruments"),
+        ("index", "quotes"),
+        ("index", "bars"),
+        ("index", "constituents"),
     }
     assert generated_registry.read_bytes() == PACKAGED_REGISTRY.read_bytes()

@@ -14,7 +14,6 @@ from platformdirs import user_cache_path
 
 from market_cli.serialization import SerializationError
 
-
 CACHE_MISS = object()
 
 

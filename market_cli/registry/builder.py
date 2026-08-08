@@ -12,7 +12,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-
 SCHEMA_VERSION = 1
 EXCLUDED_FUNCTIONS = {
     "get_token": "credential state management",
@@ -66,6 +65,19 @@ TYPE_NAMES = {
     float: "number",
     int: "integer",
     str: "string",
+}
+STABLE_COMMANDS = {
+    ("calendar", "trading-days"): "tool_trade_date_hist_sina",
+    ("index", "bars"): "stock_zh_index_daily_em",
+    ("index", "constituents"): "index_stock_cons",
+    ("index", "instruments"): "index_stock_info",
+    ("index", "quotes"): "stock_zh_index_spot_em",
+    ("stock", "bars"): "stock_zh_a_hist",
+    ("stock", "corporate-actions"): "stock_dividend_cninfo",
+    ("stock", "financials"): "stock_financial_abstract",
+    ("stock", "instruments"): "stock_info_a_code_name",
+    ("stock", "profiles"): "stock_profile_cninfo",
+    ("stock", "quotes"): "stock_zh_a_spot_em",
 }
 
 
@@ -190,6 +202,19 @@ def _discover(provider: ModuleType) -> tuple[list[dict[str, Any]], list[dict[str
                 "stability": "upstream",
             }
         )
+
+    if provider.__name__.rsplit(".", 1)[-1] == "akshare":
+        for path, function_name in STABLE_COMMANDS.items():
+            function = getattr(provider, function_name)
+            commands.append(
+                {
+                    "function": function_name,
+                    "module": function.__module__,
+                    "parameters": _parameter_contracts(function),
+                    "path": list(path),
+                    "stability": "stable",
+                }
+            )
 
     commands.sort(key=lambda command: tuple(command["path"]))
     commands_by_path: dict[tuple[str, ...], str] = {}

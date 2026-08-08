@@ -57,16 +57,59 @@ def _atomic_write(target: Path, content: str, overwrite: bool) -> None:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        if overwrite:
-            os.replace(temporary, target)
-        else:
-            try:
-                os.link(temporary, target)
-            except FileExistsError as error:
-                raise SerializationError(
-                    "OUTPUT_EXISTS", "output path already exists"
-                ) from error
-            temporary.unlink()
+        _publish_temporary(temporary, target, overwrite)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_debug_output(output: Path, diagnostic: str, overwrite: bool) -> None:
+    _atomic_write(output.absolute(), diagnostic.rstrip() + "\n", overwrite)
+
+
+def _publish_temporary(temporary: Path, target: Path, overwrite: bool) -> None:
+    if overwrite:
+        os.replace(temporary, target)
+        return
+    try:
+        os.link(temporary, target)
+    except FileExistsError as error:
+        raise SerializationError(
+            "OUTPUT_EXISTS", "output path already exists"
+        ) from error
+    temporary.unlink()
+
+
+def _write_parquet(target: Path, records: Any, overwrite: bool) -> None:
+    if not isinstance(records, list) or not all(
+        isinstance(record, dict) for record in records
+    ):
+        raise SerializationError(
+            "INCOMPATIBLE_OUTPUT_FORMAT",
+            "parquet requires a sequence of record objects",
+        )
+    try:
+        import pyarrow as pa
+        from pyarrow import parquet
+    except ImportError as error:
+        raise SerializationError(
+            "PARQUET_UNAVAILABLE",
+            "parquet output requires the market-cli[parquet] extra",
+        ) from error
+
+    _validate_target(target, overwrite)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        os.chmod(temporary, 0o600)
+        parquet.write_table(pa.Table.from_pylist(records), temporary)
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        _publish_temporary(temporary, target, overwrite)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -92,12 +135,15 @@ def export_result(
             "explicit output format conflicts with the file extension",
         )
     selected_format = output_format or inferred_format
-    if selected_format not in {"csv", "json", "jsonl"}:
+    if selected_format not in {"csv", "json", "jsonl", "parquet"}:
         raise SerializationError(
             "UNSUPPORTED_OUTPUT_FORMAT",
             "output format is not supported",
         )
     normalized = _apply_limit(value, limit)
+    if selected_format == "parquet":
+        _write_parquet(target, normalized, overwrite)
+        return {"path": str(target), "records": len(normalized)}
     if selected_format == "csv":
         if not isinstance(normalized, list) or not all(
             isinstance(record, dict) for record in normalized

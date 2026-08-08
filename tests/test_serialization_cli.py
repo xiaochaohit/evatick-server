@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -344,3 +345,51 @@ def stock_zh_a_hist(symbol='000001', period='daily', start_date='19700101',
     assert result.stdout == ""
     assert json.loads(result.stderr)["code"] == "OUTPUT_FORMAT_MISMATCH"
     assert not output_path.exists()
+
+
+def test_flat_record_sequence_can_be_exported_as_parquet(tmp_path: Path) -> None:
+    pq = pytest.importorskip("pyarrow.parquet")
+
+    fake_provider = tmp_path / "provider" / "akshare"
+    fake_provider.mkdir(parents=True)
+    (fake_provider / "__init__.py").write_text(
+        """
+def stock_zh_a_hist(symbol='000001', period='daily', start_date='19700101',
+                    end_date='20500101', adjust='', timeout=None):
+    return [{'symbol': symbol, 'price': 10.5}, {'symbol': '000003', 'price': None}]
+""".lstrip(),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "records.parquet"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (str(tmp_path / "provider"), str(PROJECT_ROOT))
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "market_cli",
+            "stock",
+            "zh-a-hist",
+            "--symbol",
+            "000002",
+            "--output",
+            str(output_path),
+            "--format",
+            "parquet",
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert pq.read_table(output_path).to_pylist() == [
+        {"price": 10.5, "symbol": "000002"},
+        {"price": None, "symbol": "000003"},
+    ]

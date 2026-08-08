@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from market_cli.output import write_debug_output
+
 
 class InvocationError(Exception):
     def __init__(self, code: str, message: str, retryable: bool) -> None:
@@ -78,6 +80,8 @@ def invoke(
     secret_parameters: dict[str, str],
     timeout: float,
     retries: int,
+    debug_output: Path | None = None,
+    overwrite: bool = False,
 ) -> Any:
     started = time.monotonic()
     working_directory = Path(tempfile.mkdtemp(prefix="market-cli-worker-"))
@@ -112,6 +116,12 @@ def invoke(
             try:
                 payload = _run_attempt(request_path, result_path, remaining)
             except subprocess.TimeoutExpired:
+                if debug_output is not None:
+                    write_debug_output(
+                        debug_output,
+                        "exception_type=TimeoutExpired\ntraceback:\n  worker timeout",
+                        overwrite,
+                    )
                 raise InvocationError(
                     "TIMEOUT",
                     f"data call exceeded the {timeout:g} second total timeout",
@@ -124,6 +134,12 @@ def invoke(
                 delay = min(0.25 * (2**attempt), max(0.0, remaining))
                 time.sleep(delay)
                 continue
+            if debug_output is not None:
+                write_debug_output(
+                    debug_output,
+                    payload.get("diagnostic", "diagnostic unavailable"),
+                    overwrite,
+                )
             raise InvocationError(
                 error["code"],
                 error["message"],

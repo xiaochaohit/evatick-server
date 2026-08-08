@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -134,17 +133,43 @@ def stock_zh_a_hist(symbol='000001', period='daily', start_date='19700101',
     ]
 
 
+def test_args_json_can_satisfy_required_signature_parameter(tmp_path: Path) -> None:
+    fake_provider = tmp_path / "akshare"
+    fake_provider.mkdir()
+    (fake_provider / "__init__.py").write_text(
+        """
+def macro_china_nbs_nation(kind, path, period='LAST10'):
+    return [{'kind': kind, 'path': path}]
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "macro",
+        "china-nbs-nation",
+        "--args-json",
+        '{"kind":{"code":"zb"},"path":"A0101"}',
+        extra_pythonpath=tmp_path,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == [
+        {"kind": {"code": "zb"}, "path": "A0101"}
+    ]
+
+
 def test_catalog_summarizes_static_registry_without_expanding_commands() -> None:
     result = run_cli("catalog")
 
     assert result.returncode == 0
     assert result.stderr == ""
     catalog = json.loads(result.stdout)
-    assert sum(domain["commands"] for domain in catalog) == 1090
+    assert sum(domain["commands"] for domain in catalog) == 1101
     assert next(domain for domain in catalog if domain["domain"] == "stock") == {
-        "commands": 399,
+        "commands": 405,
         "domain": "stock",
-        "stable": 0,
+        "stable": 6,
         "upstream": 399,
     }
     assert all("path" not in domain for domain in catalog)

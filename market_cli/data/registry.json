@@ -2270,6 +2270,16 @@
       "stability": "upstream"
     },
     {
+      "function": "tool_trade_date_hist_sina",
+      "module": "akshare.tool.trade_date_hist",
+      "parameters": [],
+      "path": [
+        "calendar",
+        "trading-days"
+      ],
+      "stability": "stable"
+    },
+    {
       "function": "amac_aoin_info",
       "module": "akshare.fund.fund_amac",
       "parameters": [],
@@ -7194,6 +7204,38 @@
       "stability": "upstream"
     },
     {
+      "function": "stock_zh_index_daily_em",
+      "module": "akshare.index.index_stock_zh",
+      "parameters": [
+        {
+          "name": "symbol",
+          "option": "--symbol",
+          "required": false,
+          "type": "string",
+          "default": "csi931151"
+        },
+        {
+          "name": "start_date",
+          "option": "--start-date",
+          "required": false,
+          "type": "string",
+          "default": "19900101"
+        },
+        {
+          "name": "end_date",
+          "option": "--end-date",
+          "required": false,
+          "type": "string",
+          "default": "20500101"
+        }
+      ],
+      "path": [
+        "index",
+        "bars"
+      ],
+      "stability": "stable"
+    },
+    {
       "function": "index_bei_cx",
       "module": "akshare.index.index_cx",
       "parameters": [],
@@ -7260,6 +7302,24 @@
         "component-sw"
       ],
       "stability": "upstream"
+    },
+    {
+      "function": "index_stock_cons",
+      "module": "akshare.index.index_cons",
+      "parameters": [
+        {
+          "name": "symbol",
+          "option": "--symbol",
+          "required": false,
+          "type": "string",
+          "default": "399639"
+        }
+      ],
+      "path": [
+        "index",
+        "constituents"
+      ],
+      "stability": "stable"
     },
     {
       "function": "index_csindex_all",
@@ -7548,6 +7608,16 @@
         "inner-quote-sugar-msweet"
       ],
       "stability": "upstream"
+    },
+    {
+      "function": "index_stock_info",
+      "module": "akshare.index.index_cons",
+      "parameters": [],
+      "path": [
+        "index",
+        "instruments"
+      ],
+      "stability": "stable"
     },
     {
       "function": "index_kq_fashion",
@@ -7900,6 +7970,24 @@
         "qli-cx"
       ],
       "stability": "upstream"
+    },
+    {
+      "function": "stock_zh_index_spot_em",
+      "module": "akshare.index.index_stock_zh",
+      "parameters": [
+        {
+          "name": "symbol",
+          "option": "--symbol",
+          "required": false,
+          "type": "string",
+          "default": "上证系列指数"
+        }
+      ],
+      "path": [
+        "index",
+        "quotes"
+      ],
+      "stability": "stable"
     },
     {
       "function": "index_realtime_fund_sw",
@@ -11910,6 +11998,59 @@
       "stability": "upstream"
     },
     {
+      "function": "stock_zh_a_hist",
+      "module": "akshare.stock_feature.stock_hist_em",
+      "parameters": [
+        {
+          "name": "symbol",
+          "option": "--symbol",
+          "required": false,
+          "type": "string",
+          "default": "000001"
+        },
+        {
+          "name": "period",
+          "option": "--period",
+          "required": false,
+          "type": "string",
+          "default": "daily"
+        },
+        {
+          "name": "start_date",
+          "option": "--start-date",
+          "required": false,
+          "type": "string",
+          "default": "19700101"
+        },
+        {
+          "name": "end_date",
+          "option": "--end-date",
+          "required": false,
+          "type": "string",
+          "default": "20500101"
+        },
+        {
+          "name": "adjust",
+          "option": "--adjust",
+          "required": false,
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "option": "--arg-timeout",
+          "required": false,
+          "type": "number",
+          "default": null
+        }
+      ],
+      "path": [
+        "stock",
+        "bars"
+      ],
+      "stability": "stable"
+    },
+    {
       "function": "stock_bid_ask_em",
       "module": "akshare.stock.stock_ask_bid_em",
       "parameters": [
@@ -12658,6 +12799,24 @@
       "stability": "upstream"
     },
     {
+      "function": "stock_dividend_cninfo",
+      "module": "akshare.stock.stock_dividend_cninfo",
+      "parameters": [
+        {
+          "name": "symbol",
+          "option": "--symbol",
+          "required": false,
+          "type": "string",
+          "default": "600009"
+        }
+      ],
+      "path": [
+        "stock",
+        "corporate-actions"
+      ],
+      "stability": "stable"
+    },
+    {
       "function": "stock_cy_a_spot_em",
       "module": "akshare.stock_feature.stock_hist_em",
       "parameters": [],
@@ -13361,6 +13520,24 @@
         "financial-us-report-em"
       ],
       "stability": "upstream"
+    },
+    {
+      "function": "stock_financial_abstract",
+      "module": "akshare.stock_fundamental.stock_finance_sina",
+      "parameters": [
+        {
+          "name": "symbol",
+          "option": "--symbol",
+          "required": false,
+          "type": "string",
+          "default": "600004"
+        }
+      ],
+      "path": [
+        "stock",
+        "financials"
+      ],
+      "stability": "stable"
     },
     {
       "function": "stock_fund_flow_big_deal",
@@ -15514,6 +15691,16 @@
       "stability": "upstream"
     },
     {
+      "function": "stock_info_a_code_name",
+      "module": "akshare.stock.stock_info",
+      "parameters": [],
+      "path": [
+        "stock",
+        "instruments"
+      ],
+      "stability": "stable"
+    },
+    {
       "function": "stock_intraday_em",
       "module": "akshare.stock.stock_intraday_em",
       "parameters": [
@@ -16523,6 +16710,24 @@
       "stability": "upstream"
     },
     {
+      "function": "stock_profile_cninfo",
+      "module": "akshare.stock.stock_profile_cninfo",
+      "parameters": [
+        {
+          "name": "symbol",
+          "option": "--symbol",
+          "required": false,
+          "type": "string",
+          "default": "600030"
+        }
+      ],
+      "path": [
+        "stock",
+        "profiles"
+      ],
+      "stability": "stable"
+    },
+    {
       "function": "stock_profit_forecast_em",
       "module": "akshare.stock_fundamental.stock_profit_forecast_em",
       "parameters": [
@@ -16664,6 +16869,16 @@
         "qsjy-em"
       ],
       "stability": "upstream"
+    },
+    {
+      "function": "stock_zh_a_spot_em",
+      "module": "akshare.stock_feature.stock_hist_em",
+      "parameters": [],
+      "path": [
+        "stock",
+        "quotes"
+      ],
+      "stability": "stable"
     },
     {
       "function": "stock_rank_cxd_ths",

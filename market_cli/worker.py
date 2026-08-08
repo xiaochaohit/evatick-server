@@ -6,6 +6,7 @@ import importlib
 import io
 import json
 import os
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +15,16 @@ import requests
 from market_cli.serialization import SerializationError, to_json_value
 
 
+def _sanitized_diagnostic(error: Exception) -> str:
+    lines = [f"exception_type={type(error).__name__}", "traceback:"]
+    for frame in traceback.extract_tb(error.__traceback__):
+        lines.append(f"  {Path(frame.filename).name}:{frame.lineno} in {frame.name}")
+    return "\n".join(lines)
+
+
 def _error_payload(error: Exception) -> dict[str, Any]:
     if isinstance(error, SerializationError):
-        return {
+        payload = {
             "ok": False,
             "error": {
                 "code": error.code,
@@ -24,6 +32,8 @@ def _error_payload(error: Exception) -> dict[str, Any]:
                 "retryable": False,
             },
         }
+        payload["diagnostic"] = _sanitized_diagnostic(error)
+        return payload
     transient_http_error = (
         isinstance(error, requests.HTTPError)
         and error.response is not None
@@ -33,7 +43,7 @@ def _error_payload(error: Exception) -> dict[str, Any]:
         isinstance(error, (requests.ConnectionError, requests.Timeout))
         or transient_http_error
     ):
-        return {
+        payload = {
             "ok": False,
             "error": {
                 "code": "NETWORK_ERROR",
@@ -41,6 +51,8 @@ def _error_payload(error: Exception) -> dict[str, Any]:
                 "retryable": True,
             },
         }
+        payload["diagnostic"] = _sanitized_diagnostic(error)
+        return payload
     return {
         "ok": False,
         "error": {
@@ -48,6 +60,7 @@ def _error_payload(error: Exception) -> dict[str, Any]:
             "message": "data provider call failed",
             "retryable": False,
         },
+        "diagnostic": _sanitized_diagnostic(error),
     }
 
 

@@ -6,12 +6,19 @@ build-backend = "setuptools.build_meta"
 name = "market-cli"
 version = "0.1.0"
 description = "Model-oriented CLI for discoverable market data"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 dependencies = [
     "akshare==1.18.82",
     "click>=8.1,<9",
     "platformdirs>=4,<5",
 ]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=18,<24"]
+test = ["pytest>=9,<10"]
 
 [project.scripts]
 market-cli = "market_cli.cli:main"

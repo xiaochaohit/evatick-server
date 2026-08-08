@@ -24,7 +24,6 @@ from market_cli.registry.runtime import load_registry
 from market_cli.serialization import SerializationError, dumps
 from market_cli.supervisor import InvocationError, invoke
 
-
 TYPE_LABELS = {
     "date": "DATE",
     "datetime": "DATETIME",
@@ -87,7 +86,7 @@ class RegistryRootGroup(ModelGroup):
 def _click_option(parameter: dict[str, Any]) -> click.Option:
     declarations = [parameter["option"], f"data__{parameter['name']}"]
     keyword_arguments: dict[str, Any] = {
-        "required": parameter["required"],
+        "required": False,
     }
     if not parameter["required"]:
         keyword_arguments["default"] = parameter.get("default")
@@ -179,6 +178,7 @@ class DataCommand(click.Command):
                     type=click.Choice(["json", "jsonl", "csv", "parquet"]),
                 ),
                 click.Option(["--overwrite"], is_flag=True, default=False),
+                click.Option(["--debug-output"], type=click.Path(path_type=Path)),
                 click.Option(
                     ["--timeout"],
                     type=click.FloatRange(min=0.1),
@@ -203,6 +203,7 @@ class DataCommand(click.Command):
         output = parameters.pop("output")
         output_format = parameters.pop("output_format")
         overwrite = parameters.pop("overwrite")
+        debug_output = parameters.pop("debug_output")
         timeout = parameters.pop("timeout")
         retries = parameters.pop("retries")
         args_json = parameters.pop("args_json")
@@ -214,6 +215,13 @@ class DataCommand(click.Command):
             name.removeprefix("data__"): value for name, value in parameters.items()
         }
         context = click.get_current_context()
+        if args_json is None:
+            for parameter in self.contract["parameters"]:
+                if not parameter["required"]:
+                    continue
+                source = context.get_parameter_source(f"data__{parameter['name']}")
+                if source is not ParameterSource.COMMANDLINE:
+                    raise click.UsageError(f"Missing option '{parameter['option']}'.")
         data_parameters = (
             _parse_args_json(args_json, self.contract["parameters"], context)
             if args_json is not None
@@ -259,6 +267,8 @@ class DataCommand(click.Command):
                 secret_parameters=secret_parameters,
                 timeout=timeout,
                 retries=retries,
+                debug_output=debug_output,
+                overwrite=overwrite,
             )
             if cache_store is not None:
                 cache_store.set(cache_key, result, cache_ttl)
@@ -304,6 +314,7 @@ class DataCommand(click.Command):
         formatter.write("    --output PATH\n")
         formatter.write("    --format [json|jsonl|csv|parquet]\n")
         formatter.write("    --overwrite\n")
+        formatter.write("    --debug-output PATH\n")
         formatter.write("    --timeout NUMBER\n")
         formatter.write("    --retries INTEGER\n")
         formatter.write("    --args-json JSON\n")
