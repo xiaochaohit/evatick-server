@@ -104,3 +104,30 @@ def test_invalid_generated_option_is_a_json_usage_error() -> None:
     assert error["code"] == "INVALID_ARGUMENT"
     assert error["retryable"] is False
     assert "--page" in error["message"]
+
+
+def test_model_can_supply_data_parameters_as_strict_json(tmp_path: Path) -> None:
+    fake_provider = tmp_path / "akshare"
+    fake_provider.mkdir()
+    (fake_provider / "__init__.py").write_text(
+        """
+def stock_zh_a_hist(symbol='000001', period='daily', start_date='19700101',
+                    end_date='20500101', adjust='', timeout=None):
+    return [{'symbol': symbol, 'start_date': start_date}]
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "stock",
+        "zh-a-hist",
+        "--args-json",
+        '{"symbol":"000009","start_date":"20240203"}',
+        extra_pythonpath=tmp_path,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == [
+        {"start_date": "20240203", "symbol": "000009"}
+    ]
