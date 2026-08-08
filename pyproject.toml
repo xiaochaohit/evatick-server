@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "market-cli"
+version = "0.1.0"
+description = "Model-oriented CLI for discoverable market data"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1,<9",
+]
+
+[project.scripts]
+market-cli = "market_cli.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["market_cli*"]
