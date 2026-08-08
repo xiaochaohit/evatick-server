@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Model-oriented CLI for discoverable market data"
 requires-python = ">=3.11"
 dependencies = [
+    "akshare==1.18.82",
     "click>=8.1,<9",
 ]
 
@@ -19,3 +20,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["market_cli*"]
+
+[tool.setuptools.package-data]
+market_cli = ["data/*.json"]

@@ -20,7 +20,31 @@ EXCLUDED_FUNCTIONS = {
     "set_token": "credential state management",
 }
 DOMAIN_ALIASES = {
+    "currency": "fx",
     "forex": "fx",
+}
+MODULE_DOMAINS = {
+    "bond": "bond",
+    "cal": "stock",
+    "currency": "fx",
+    "economic": "macro",
+    "forex": "fx",
+    "fund": "fund",
+    "futures": "futures",
+    "futures_derivative": "futures",
+    "fx": "fx",
+    "hf": "futures",
+    "index": "index",
+    "interest_rate": "bond",
+    "option": "option",
+    "qdii": "fund",
+    "qhkc_web": "futures",
+    "rate": "bond",
+    "reits": "fund",
+    "stock": "stock",
+    "stock_feature": "stock",
+    "stock_fundamental": "stock",
+    "tool": "stock",
 }
 FRAMEWORK_OPTIONS = {
     "cache_ttl",
@@ -59,10 +83,15 @@ def _provider_identity(provider: ModuleType) -> dict[str, str]:
     }
 
 
-def _command_path(function_name: str) -> list[str]:
+def _command_path(function_name: str, function_module: str) -> list[str]:
     prefix, separator, remainder = function_name.partition("_")
-    domain = DOMAIN_ALIASES.get(prefix, prefix)
-    command_name = remainder if separator else function_name
+    prefix_domain = DOMAIN_ALIASES.get(prefix, prefix)
+    module_parts = function_module.split(".")
+    if len(module_parts) > 1 and module_parts[0] == "akshare":
+        domain = MODULE_DOMAINS.get(module_parts[1], "alternative")
+    else:
+        domain = prefix_domain
+    command_name = remainder if separator and prefix_domain == domain else function_name
     return [domain, command_name.replace("_", "-").lower()]
 
 
@@ -143,7 +172,7 @@ def _discover(provider: ModuleType) -> tuple[list[dict[str, Any]], list[dict[str
     seen_functions: set[int] = set()
 
     for name, value in inspect.getmembers(provider):
-        if name.startswith("_") or not inspect.isfunction(value):
+        if name.startswith("_") or not callable(value) or inspect.isclass(value):
             continue
         if name in EXCLUDED_FUNCTIONS:
             exclusions.append({"name": name, "reason": EXCLUDED_FUNCTIONS[name]})
@@ -157,7 +186,7 @@ def _discover(provider: ModuleType) -> tuple[list[dict[str, Any]], list[dict[str
                 "function": name,
                 "module": value.__module__,
                 "parameters": _parameter_contracts(value),
-                "path": _command_path(name),
+                "path": _command_path(name, value.__module__),
                 "stability": "upstream",
             }
         )

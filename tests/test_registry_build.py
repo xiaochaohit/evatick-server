@@ -149,3 +149,70 @@ def test_builder_rejects_colliding_command_paths(tmp_path: Path) -> None:
     assert "forex_rate" in error["message"]
     assert "fx_rate" in error["message"]
     assert not output_path.exists()
+
+
+def test_builder_includes_wrapped_functions_but_not_exception_classes(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "registry.json"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "market_cli.registry",
+            "build",
+            "--provider",
+            "tests.fixtures.wrapped_provider",
+            "--output",
+            str(output_path),
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    registry = json.loads(output_path.read_text(encoding="utf-8"))
+    assert [command["function"] for command in registry["commands"]] == [
+        "bond_cached_lookup"
+    ]
+
+
+def test_builder_maps_source_modules_to_compact_domain_taxonomy(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "registry.json"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "market_cli.registry",
+            "build",
+            "--provider",
+            "tests.fixtures.taxonomy_provider",
+            "--output",
+            str(output_path),
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    registry = json.loads(output_path.read_text(encoding="utf-8"))
+    assert [command["path"] for command in registry["commands"]] == [
+        ["alternative", "air-quality-hebei"],
+        ["fund", "amac-fund-info"],
+        ["futures", "get-cffex-daily"],
+        ["fx", "boc-sina"],
+    ]
