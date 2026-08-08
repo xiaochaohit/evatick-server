@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -131,3 +132,70 @@ def stock_zh_a_hist(symbol='000001', period='daily', start_date='19700101',
     assert json.loads(result.stdout) == [
         {"start_date": "20240203", "symbol": "000009"}
     ]
+
+
+def test_catalog_summarizes_static_registry_without_expanding_commands() -> None:
+    result = run_cli("catalog")
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    catalog = json.loads(result.stdout)
+    assert sum(domain["commands"] for domain in catalog) == 1090
+    assert next(domain for domain in catalog if domain["domain"] == "stock") == {
+        "commands": 399,
+        "domain": "stock",
+        "stable": 0,
+        "upstream": 399,
+    }
+    assert all("path" not in domain for domain in catalog)
+
+
+def test_search_ranks_exact_command_name_before_substrings() -> None:
+    result = run_cli(
+        "search",
+        "--query",
+        "zh-a-hist",
+        "--domain",
+        "stock",
+        "--limit",
+        "5",
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    matches = json.loads(result.stdout)
+    assert matches[0] == {
+        "function": "stock_zh_a_hist",
+        "path": "market-cli stock zh-a-hist",
+        "provider": "akshare",
+        "purpose": "调用 AKShare 函数 stock_zh_a_hist。",
+        "stability": "upstream",
+    }
+    assert len(matches) <= 5
+
+
+def test_version_reports_cli_provider_and_registry_fingerprint() -> None:
+    result = run_cli("version")
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    version = json.loads(result.stdout)
+    assert version["market_cli"] == "0.1.0"
+    assert version["providers"] == {"akshare": "1.18.82"}
+    assert version["python"] == platform.python_version()
+    assert len(version["registry_sha256"]) == 64
+
+
+def test_doctor_runs_offline_checks_without_exposing_home_directory() -> None:
+    result = run_cli("doctor")
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    doctor = json.loads(result.stdout)
+    assert doctor["status"] in {"ok", "warning"}
+    checks = {check["name"]: check for check in doctor["checks"]}
+    assert checks["registry"]["status"] == "ok"
+    assert checks["provider_version"]["status"] == "ok"
+    assert checks["worker"]["status"] == "ok"
+    assert checks["parquet"]["status"] in {"ok", "warning"}
+    assert str(Path.home()) not in result.stdout

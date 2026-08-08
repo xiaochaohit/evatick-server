@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
+import importlib.util
 import json
+import platform
 import re
+import subprocess
+import sys
+from collections import Counter
 from collections.abc import Sequence
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import click
 from click.core import ParameterSource
 
+from market_cli import __version__
+from market_cli.cache import CACHE_MISS, CacheStore
 from market_cli.output import export_result
 from market_cli.registry.runtime import load_registry
 from market_cli.serialization import SerializationError, dumps
@@ -64,9 +74,12 @@ class RegistryRootGroup(ModelGroup):
         return commands_by_domain
 
     def list_commands(self, ctx: click.Context) -> list[str]:
-        return sorted(self._commands_by_domain())
+        return sorted({*self._commands_by_domain(), *super().list_commands(ctx)})
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        built_in = super().get_command(ctx, cmd_name)
+        if built_in is not None:
+            return built_in
         commands = self._commands_by_domain().get(cmd_name)
         return DomainGroup(cmd_name, commands) if commands is not None else None
 
@@ -177,6 +190,11 @@ class DataCommand(click.Command):
                     default=2,
                 ),
                 click.Option(["--args-json"]),
+                click.Option(
+                    ["--cache-ttl"],
+                    type=click.IntRange(min=1),
+                ),
+                click.Option(["--refresh"], is_flag=True, default=False),
             ],
         )
 
@@ -188,6 +206,10 @@ class DataCommand(click.Command):
         timeout = parameters.pop("timeout")
         retries = parameters.pop("retries")
         args_json = parameters.pop("args_json")
+        cache_ttl = parameters.pop("cache_ttl")
+        refresh = parameters.pop("refresh")
+        if refresh and cache_ttl is None:
+            raise click.UsageError("--refresh requires --cache-ttl")
         option_parameters = {
             name.removeprefix("data__"): value for name, value in parameters.items()
         }
@@ -211,14 +233,35 @@ class DataCommand(click.Command):
                 )
             secret_parameters[parameter["name"]] = environment_name
         provider_name = load_registry()["provider"]["name"]
-        result = invoke(
-            provider=provider_name,
-            function=self.contract["function"],
-            parameters=data_parameters,
-            secret_parameters=secret_parameters,
-            timeout=timeout,
-            retries=retries,
+        provider_contract = load_registry()["provider"]
+        cache_store = CacheStore() if cache_ttl is not None else None
+        cache_key = (
+            cache_store.key(
+                provider=provider_contract,
+                function=self.contract["function"],
+                parameters=data_parameters,
+                secret_parameters=secret_parameters,
+                limit=limit,
+            )
+            if cache_store is not None
+            else None
         )
+        result = (
+            CACHE_MISS
+            if cache_store is None or refresh
+            else cache_store.get(cache_key, cache_ttl)
+        )
+        if result is CACHE_MISS:
+            result = invoke(
+                provider=provider_name,
+                function=self.contract["function"],
+                parameters=data_parameters,
+                secret_parameters=secret_parameters,
+                timeout=timeout,
+                retries=retries,
+            )
+            if cache_store is not None:
+                cache_store.set(cache_key, result, cache_ttl)
         if output is None:
             if output_format is not None:
                 raise click.UsageError("--format requires --output")
@@ -264,6 +307,8 @@ class DataCommand(click.Command):
         formatter.write("    --timeout NUMBER\n")
         formatter.write("    --retries INTEGER\n")
         formatter.write("    --args-json JSON\n")
+        formatter.write("    --cache-ttl INTEGER\n")
+        formatter.write("    --refresh\n")
         formatter.write("\nRETURNS\n    返回上游函数的严格 JSON 序列化结果。\n\n")
         formatter.write(f"EXAMPLES\n    {path}\n\n")
         formatter.write("ERRORS\n    失败时 stderr 返回单个 JSON 错误对象。\n")
@@ -272,6 +317,203 @@ class DataCommand(click.Command):
 @click.group(cls=RegistryRootGroup)
 def cli() -> None:
     """Market CLI root command."""
+
+
+@cli.command("catalog")
+def catalog_command() -> None:
+    """Summarize command domains."""
+    counts_by_domain: dict[str, Counter[str]] = {}
+    for command in load_registry()["commands"]:
+        domain = command["path"][0]
+        counts_by_domain.setdefault(domain, Counter())[command["stability"]] += 1
+    catalog = [
+        {
+            "domain": domain,
+            "commands": sum(counts.values()),
+            "stable": counts["stable"],
+            "upstream": counts["upstream"],
+        }
+        for domain, counts in sorted(counts_by_domain.items())
+    ]
+    click.echo(dumps(catalog))
+
+
+def _search_score(command: dict[str, Any], query: str) -> int | None:
+    command_name = command["path"][1].lower()
+    full_path = " ".join(("market-cli", *command["path"])).lower()
+    function_name = command["function"].lower()
+    query = query.lower()
+    if query in {command_name, full_path}:
+        return 0
+    if command_name.startswith(query) or full_path.startswith(query):
+        return 1
+    tokens = set(re.split(r"[-_\s]+", f"{full_path} {function_name}"))
+    if query in tokens:
+        return 2
+    if query in full_path or query in function_name:
+        return 3
+    return None
+
+
+@cli.command("search")
+@click.option("--query")
+@click.option("--domain")
+@click.option("--stability", type=click.Choice(["stable", "upstream"]))
+@click.option("--limit", type=click.IntRange(min=1, max=200), default=20)
+def search_command(
+    query: str | None,
+    domain: str | None,
+    stability: str | None,
+    limit: int,
+) -> None:
+    """Search command paths and provider functions."""
+    if query is None and domain is None:
+        raise click.UsageError("search requires --query or --domain")
+    registry = load_registry()
+    ranked: list[tuple[int, tuple[str, ...], dict[str, Any]]] = []
+    for command in registry["commands"]:
+        if domain is not None and command["path"][0] != domain:
+            continue
+        if stability is not None and command["stability"] != stability:
+            continue
+        score = 0 if query is None else _search_score(command, query)
+        if score is None:
+            continue
+        ranked.append((score, tuple(command["path"]), command))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    provider = registry["provider"]["name"]
+    matches = [
+        {
+            "path": " ".join(("market-cli", *command["path"])),
+            "purpose": f"调用 AKShare 函数 {command['function']}。",
+            "stability": command["stability"],
+            "provider": provider,
+            "function": command["function"],
+        }
+        for _, _, command in ranked[:limit]
+    ]
+    click.echo(dumps(matches))
+
+
+@cli.command("version")
+def version_command() -> None:
+    """Report runtime and registry versions."""
+    registry = load_registry()
+    registry_bytes = files("market_cli.data").joinpath("registry.json").read_bytes()
+    click.echo(
+        dumps(
+            {
+                "market_cli": __version__,
+                "python": platform.python_version(),
+                "providers": {
+                    registry["provider"]["name"]: registry["provider"]["version"]
+                },
+                "registry_sha256": hashlib.sha256(registry_bytes).hexdigest(),
+            }
+        )
+    )
+
+
+@cli.command("doctor")
+def doctor_command() -> None:
+    """Run offline installation checks."""
+    registry = load_registry()
+    provider = registry["provider"]
+    checks: list[dict[str, str]] = [
+        {
+            "name": "registry",
+            "status": "ok",
+            "message": "static registry is readable",
+        }
+    ]
+    try:
+        installed_version = importlib.metadata.version(provider["name"])
+    except importlib.metadata.PackageNotFoundError:
+        installed_version = None
+    version_matches = installed_version == provider["version"]
+    checks.append(
+        {
+            "name": "provider_version",
+            "status": "ok" if version_matches else "error",
+            "message": (
+                "installed provider matches the registry"
+                if version_matches
+                else "installed provider does not match the registry"
+            ),
+        }
+    )
+    provider_import = subprocess.run(
+        [sys.executable, "-c", f"import {provider['name']}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    checks.append(
+        {
+            "name": "provider_import",
+            "status": "ok" if provider_import.returncode == 0 else "error",
+            "message": (
+                "provider can be imported"
+                if provider_import.returncode == 0
+                else "provider import failed"
+            ),
+        }
+    )
+    worker_check = subprocess.run(
+        [sys.executable, "-c", "from market_cli.worker import execute"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    checks.append(
+        {
+            "name": "worker",
+            "status": "ok" if worker_check.returncode == 0 else "error",
+            "message": (
+                "worker process can start"
+                if worker_check.returncode == 0
+                else "worker process failed to start"
+            ),
+        }
+    )
+    parquet_available = importlib.util.find_spec("pyarrow") is not None
+    checks.append(
+        {
+            "name": "parquet",
+            "status": "ok" if parquet_available else "warning",
+            "message": (
+                "optional parquet support is available"
+                if parquet_available
+                else "optional parquet support is not installed"
+            ),
+        }
+    )
+    statuses = {check["status"] for check in checks}
+    overall = "error" if "error" in statuses else "warning" if "warning" in statuses else "ok"
+    click.echo(dumps({"status": overall, "checks": checks}))
+    if overall == "error":
+        raise SystemExit(1)
+
+
+@cli.group("cache")
+def cache_group() -> None:
+    """Inspect and clear explicit result cache entries."""
+
+
+@cache_group.command("status")
+def cache_status_command() -> None:
+    click.echo(dumps(CacheStore().status()))
+
+
+@cache_group.command("clear")
+@click.option("--expired", is_flag=True)
+@click.option("--all", "all_entries", is_flag=True)
+def cache_clear_command(expired: bool, all_entries: bool) -> None:
+    if expired == all_entries:
+        raise click.UsageError("cache clear requires exactly one of --expired or --all")
+    click.echo(dumps(CacheStore().clear(expired_only=expired)))
 
 
 def main() -> None:
