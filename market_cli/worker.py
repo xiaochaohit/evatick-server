@@ -22,6 +22,58 @@ def _sanitized_diagnostic(error: Exception) -> str:
     return "\n".join(lines)
 
 
+def _is_transient_network_error(error: Exception) -> bool:
+    transient_http_error = (
+        isinstance(error, requests.HTTPError)
+        and error.response is not None
+        and error.response.status_code in {429, 502, 503, 504}
+    )
+    return isinstance(error, (requests.ConnectionError, requests.Timeout)) or (
+        transient_http_error
+    )
+
+
+def _sina_stock_symbol(symbol: str) -> str:
+    if symbol.startswith("6"):
+        return f"sh{symbol}"
+    if symbol.startswith(("4", "8")):
+        return f"bj{symbol}"
+    return f"sz{symbol}"
+
+
+def _sina_date(value: str) -> str:
+    if len(value) == 8 and value.isdigit():
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    return value
+
+
+def _stock_bars(provider: Any, parameters: dict[str, Any]) -> tuple[Any, str]:
+    try:
+        return provider.stock_zh_a_hist(**parameters), "eastmoney"
+    except Exception as error:
+        if (
+            not _is_transient_network_error(error)
+            or parameters.get("period", "daily") != "daily"
+        ):
+            raise
+    fallback_parameters = {
+        "symbol": _sina_stock_symbol(parameters.get("symbol", "000001")),
+        "start_date": _sina_date(parameters.get("start_date", "19700101")),
+        "end_date": _sina_date(parameters.get("end_date", "20500101")),
+        "adjust": parameters.get("adjust", ""),
+    }
+    return provider.stock_zh_a_daily(**fallback_parameters), "sina"
+
+
+def _mark_source(result: Any, source: str) -> Any:
+    normalized = to_json_value(result)
+    if isinstance(normalized, list) and all(
+        isinstance(record, dict) for record in normalized
+    ):
+        return [{"_market_cli_source": source, **record} for record in normalized]
+    return normalized
+
+
 def _error_payload(error: Exception) -> dict[str, Any]:
     if isinstance(error, SerializationError):
         payload = {
@@ -34,15 +86,7 @@ def _error_payload(error: Exception) -> dict[str, Any]:
         }
         payload["diagnostic"] = _sanitized_diagnostic(error)
         return payload
-    transient_http_error = (
-        isinstance(error, requests.HTTPError)
-        and error.response is not None
-        and error.response.status_code in {429, 502, 503, 504}
-    )
-    if (
-        isinstance(error, (requests.ConnectionError, requests.Timeout))
-        or transient_http_error
-    ):
+    if _is_transient_network_error(error):
         payload = {
             "ok": False,
             "error": {
@@ -94,9 +138,13 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
             io.StringIO()
         ):
             provider = importlib.import_module(request["provider"])
-            function = getattr(provider, request["function"])
-            result = function(**parameters)
-        return {"ok": True, "result": to_json_value(result)}
+            if request.get("adapter") == "stock_bars":
+                result, source = _stock_bars(provider, parameters)
+                normalized = _mark_source(result, source)
+            else:
+                function = getattr(provider, request["function"])
+                normalized = to_json_value(function(**parameters))
+        return {"ok": True, "result": normalized}
     except Exception as error:  # noqa: BLE001 - worker is the provider boundary
         return _error_payload(error)
 

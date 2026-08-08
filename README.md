@@ -13,6 +13,8 @@ market-cli search --query zh-a-hist
 market-cli stock zh-a-hist --symbol 000001 --limit 5
 ```
 
+The stable `market-cli stock bars` command uses Eastmoney first and falls back to Sina for daily bars when Eastmoney has a transient network failure. Each returned record includes `_market_cli_source` with the source actually used.
+
 Parquet export is optional:
 
 ```shell

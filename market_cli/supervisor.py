@@ -76,6 +76,7 @@ def invoke(
     *,
     provider: str,
     function: str,
+    adapter: str | None,
     parameters: dict[str, Any],
     secret_parameters: dict[str, str],
     timeout: float,
@@ -99,6 +100,7 @@ def invoke(
                 {
                     "provider": provider,
                     "function": function,
+                    "adapter": adapter,
                     "parameters": parameters,
                     "secret_parameters": secret_parameters,
                 },

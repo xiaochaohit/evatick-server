@@ -12048,7 +12048,13 @@
         "stock",
         "bars"
       ],
-      "stability": "stable"
+      "stability": "stable",
+      "adapter": "stock_bars",
+      "fallback_function": "stock_zh_a_daily",
+      "sources": [
+        "eastmoney",
+        "sina"
+      ]
     },
     {
       "function": "stock_bid_ask_em",

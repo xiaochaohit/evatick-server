@@ -206,15 +206,18 @@ def _discover(provider: ModuleType) -> tuple[list[dict[str, Any]], list[dict[str
     if provider.__name__.rsplit(".", 1)[-1] == "akshare":
         for path, function_name in STABLE_COMMANDS.items():
             function = getattr(provider, function_name)
-            commands.append(
-                {
-                    "function": function_name,
-                    "module": function.__module__,
-                    "parameters": _parameter_contracts(function),
-                    "path": list(path),
-                    "stability": "stable",
-                }
-            )
+            command = {
+                "function": function_name,
+                "module": function.__module__,
+                "parameters": _parameter_contracts(function),
+                "path": list(path),
+                "stability": "stable",
+            }
+            if path == ("stock", "bars"):
+                command["adapter"] = "stock_bars"
+                command["fallback_function"] = "stock_zh_a_daily"
+                command["sources"] = ["eastmoney", "sina"]
+            commands.append(command)
 
     commands.sort(key=lambda command: tuple(command["path"]))
     commands_by_path: dict[tuple[str, ...], str] = {}

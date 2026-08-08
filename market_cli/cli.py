@@ -263,6 +263,7 @@ class DataCommand(click.Command):
             result = invoke(
                 provider=provider_name,
                 function=self.contract["function"],
+                adapter=self.contract.get("adapter"),
                 parameters=data_parameters,
                 secret_parameters=secret_parameters,
                 timeout=timeout,
@@ -302,6 +303,12 @@ class DataCommand(click.Command):
             f"    Provider: {provider['name']} {provider['version']}\n"
             f"    Function: {command['function']}\n\n"
         )
+        if command.get("fallback_function"):
+            formatter.write(
+                "FALLBACK\n"
+                f"    Function: {command['fallback_function']}\n"
+                f"    Sources: {', '.join(command['sources'])}\n\n"
+            )
         formatter.write(f"USAGE\n    {path} [OPTIONS]\n\n")
         formatter.write("OPTIONS\n")
         for parameter in command["parameters"]:
