@@ -3,11 +3,14 @@ from __future__ import annotations
 import importlib
 import json
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import click
 
+from market_cli.output import export_result
 from market_cli.registry.runtime import load_registry
+from market_cli.serialization import SerializationError, dumps
 
 
 TYPE_LABELS = {
@@ -67,7 +70,7 @@ class RegistryRootGroup(ModelGroup):
 
 
 def _click_option(parameter: dict[str, Any]) -> click.Option:
-    declarations = [parameter["option"], parameter["name"]]
+    declarations = [parameter["option"], f"data__{parameter['name']}"]
     keyword_arguments: dict[str, Any] = {
         "required": parameter["required"],
     }
@@ -86,22 +89,47 @@ class DataCommand(click.Command):
         super().__init__(
             name=command["path"][1],
             callback=self._invoke,
-            params=[_click_option(parameter) for parameter in command["parameters"]],
+            params=[
+                *[_click_option(parameter) for parameter in command["parameters"]],
+                click.Option(
+                    ["--limit"],
+                    type=click.IntRange(min=1),
+                    default=None,
+                ),
+                click.Option(["--output"], type=click.Path(path_type=Path)),
+                click.Option(
+                    ["--format", "output_format"],
+                    type=click.Choice(["json", "jsonl", "csv", "parquet"]),
+                ),
+                click.Option(["--overwrite"], is_flag=True, default=False),
+            ],
         )
 
     def _invoke(self, **parameters: Any) -> None:
+        limit = parameters.pop("limit")
+        output = parameters.pop("output")
+        output_format = parameters.pop("output_format")
+        overwrite = parameters.pop("overwrite")
+        data_parameters = {
+            name.removeprefix("data__"): value for name, value in parameters.items()
+        }
         provider_name = load_registry()["provider"]["name"]
         provider = importlib.import_module(provider_name)
         function = getattr(provider, self.contract["function"])
-        result = function(**parameters)
-        click.echo(
-            json.dumps(
-                result,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-            )
+        result = function(**data_parameters)
+        if output is None:
+            if output_format is not None:
+                raise click.UsageError("--format requires --output")
+            click.echo(dumps(result, limit=limit))
+            return
+        summary = export_result(
+            result,
+            output=output,
+            output_format=output_format,
+            overwrite=overwrite,
+            limit=limit,
         )
+        click.echo(dumps(summary))
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         command = self.contract
@@ -127,6 +155,10 @@ class DataCommand(click.Command):
             suffix = f" {type_label}" if type_label else ""
             required = " [required]" if parameter["required"] else ""
             formatter.write(f"    {option}{suffix}{required}\n")
+        formatter.write("    --limit INTEGER\n")
+        formatter.write("    --output PATH\n")
+        formatter.write("    --format [json|jsonl|csv|parquet]\n")
+        formatter.write("    --overwrite\n")
         formatter.write("\nRETURNS\n    返回上游函数的严格 JSON 序列化结果。\n\n")
         formatter.write(f"EXAMPLES\n    {path}\n\n")
         formatter.write("ERRORS\n    失败时 stderr 返回单个 JSON 错误对象。\n")
@@ -154,3 +186,17 @@ def main() -> None:
             err=True,
         )
         raise SystemExit(2) from None
+    except SerializationError as error:
+        click.echo(
+            json.dumps(
+                {
+                    "code": error.code,
+                    "message": error.message,
+                    "retryable": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            err=True,
+        )
+        raise SystemExit(1) from None
