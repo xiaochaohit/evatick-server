@@ -48,21 +48,20 @@ def _sina_date(value: str) -> str:
 
 
 def _stock_bars(provider: Any, parameters: dict[str, Any]) -> tuple[Any, str]:
-    try:
+    if parameters.get("period", "daily") != "daily":
         return provider.stock_zh_a_hist(**parameters), "eastmoney"
-    except Exception as error:
-        if (
-            not _is_transient_network_error(error)
-            or parameters.get("period", "daily") != "daily"
-        ):
-            raise
-    fallback_parameters = {
+    sina_parameters = {
         "symbol": _sina_stock_symbol(parameters.get("symbol", "000001")),
         "start_date": _sina_date(parameters.get("start_date", "19700101")),
         "end_date": _sina_date(parameters.get("end_date", "20500101")),
         "adjust": parameters.get("adjust", ""),
     }
-    return provider.stock_zh_a_daily(**fallback_parameters), "sina"
+    try:
+        return provider.stock_zh_a_daily(**sina_parameters), "sina"
+    except Exception as error:
+        if not _is_transient_network_error(error):
+            raise
+    return provider.stock_zh_a_hist(**parameters), "eastmoney"
 
 
 def _mark_source(result: Any, source: str) -> Any:

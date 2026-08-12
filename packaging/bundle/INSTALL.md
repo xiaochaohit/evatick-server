@@ -1,6 +1,6 @@
 # Market CLI bundle installation
 
-This bundle installs Market CLI 0.1.0 and the matching Codex `market-cli` skill.
+This bundle installs the included Market CLI release and its matching Codex `market-cli` skill.
 
 ## Requirements
 

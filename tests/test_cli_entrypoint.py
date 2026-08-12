@@ -90,18 +90,13 @@ def stock_zh_a_hist(symbol='000001', period='daily', start_date='19700101',
     ]
 
 
-def test_stable_stock_bars_falls_back_to_sina_on_network_failure(
-    tmp_path: Path,
-) -> None:
+def test_stable_stock_bars_uses_sina_as_the_default_source(tmp_path: Path) -> None:
     fake_provider = tmp_path / "akshare"
     fake_provider.mkdir()
     (fake_provider / "__init__.py").write_text(
         """
-import requests
-
-
 def stock_zh_a_hist(**parameters):
-    raise requests.ConnectionError('primary source unavailable')
+    raise AssertionError('Eastmoney must not be called when Sina succeeds')
 
 
 def stock_zh_a_daily(symbol, start_date, end_date, adjust):
@@ -142,6 +137,66 @@ def stock_zh_a_daily(symbol, start_date, end_date, adjust):
             "end_date": "2026-08-08",
             "start_date": "2026-07-01",
             "symbol": "sz000001",
+        }
+    ]
+
+
+def test_stable_stock_bars_falls_back_to_eastmoney_on_network_failure(
+    tmp_path: Path,
+) -> None:
+    fake_provider = tmp_path / "akshare"
+    fake_provider.mkdir()
+    (fake_provider / "__init__.py").write_text(
+        """
+import requests
+
+
+def stock_zh_a_daily(**parameters):
+    raise requests.ConnectionError('Sina is temporarily unavailable')
+
+
+def stock_zh_a_hist(symbol, period, start_date, end_date, adjust, timeout):
+    return [{
+        'symbol': symbol,
+        'period': period,
+        'start_date': start_date,
+        'end_date': end_date,
+        'adjust': adjust,
+        'timeout': timeout,
+        'close': 10.18,
+    }]
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "stock",
+        "bars",
+        "--symbol",
+        "000001",
+        "--start-date",
+        "20260701",
+        "--end-date",
+        "20260808",
+        "--adjust",
+        "qfq",
+        "--retries",
+        "0",
+        extra_pythonpath=tmp_path,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == [
+        {
+            "_market_cli_source": "eastmoney",
+            "adjust": "qfq",
+            "close": 10.18,
+            "end_date": "20260808",
+            "period": "daily",
+            "start_date": "20260701",
+            "symbol": "000001",
+            "timeout": None,
         }
     ]
 
@@ -261,7 +316,7 @@ def test_version_reports_cli_provider_and_registry_fingerprint() -> None:
     assert result.returncode == 0
     assert result.stderr == ""
     version = json.loads(result.stdout)
-    assert version["market_cli"] == "0.1.0"
+    assert version["market_cli"] == "0.1.1"
     assert version["providers"] == {"akshare": "1.18.82"}
     assert version["python"] == platform.python_version()
     assert len(version["registry_sha256"]) == 64

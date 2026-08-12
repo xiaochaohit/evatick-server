@@ -72,7 +72,7 @@ STABLE_COMMANDS = {
     ("index", "constituents"): "index_stock_cons",
     ("index", "instruments"): "index_stock_info",
     ("index", "quotes"): "stock_zh_index_spot_em",
-    ("stock", "bars"): "stock_zh_a_hist",
+    ("stock", "bars"): "stock_zh_a_daily",
     ("stock", "corporate-actions"): "stock_dividend_cninfo",
     ("stock", "financials"): "stock_financial_abstract",
     ("stock", "instruments"): "stock_info_a_code_name",
@@ -206,17 +206,20 @@ def _discover(provider: ModuleType) -> tuple[list[dict[str, Any]], list[dict[str
     if provider.__name__.rsplit(".", 1)[-1] == "akshare":
         for path, function_name in STABLE_COMMANDS.items():
             function = getattr(provider, function_name)
+            parameter_function = function
+            if path == ("stock", "bars"):
+                parameter_function = provider.stock_zh_a_hist
             command = {
                 "function": function_name,
                 "module": function.__module__,
-                "parameters": _parameter_contracts(function),
+                "parameters": _parameter_contracts(parameter_function),
                 "path": list(path),
                 "stability": "stable",
             }
             if path == ("stock", "bars"):
                 command["adapter"] = "stock_bars"
-                command["fallback_function"] = "stock_zh_a_daily"
-                command["sources"] = ["eastmoney", "sina"]
+                command["fallback_function"] = "stock_zh_a_hist"
+                command["sources"] = ["sina", "eastmoney"]
             commands.append(command)
 
     commands.sort(key=lambda command: tuple(command["path"]))

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Model-oriented CLI for discoverable market data"
 readme = "README.md"
 license = "MIT"

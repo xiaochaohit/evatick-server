@@ -11998,8 +11998,8 @@
       "stability": "upstream"
     },
     {
-      "function": "stock_zh_a_hist",
-      "module": "akshare.stock_feature.stock_hist_em",
+      "function": "stock_zh_a_daily",
+      "module": "akshare.stock.stock_zh_a_sina",
       "parameters": [
         {
           "name": "symbol",
@@ -12050,10 +12050,10 @@
       ],
       "stability": "stable",
       "adapter": "stock_bars",
-      "fallback_function": "stock_zh_a_daily",
+      "fallback_function": "stock_zh_a_hist",
       "sources": [
-        "eastmoney",
-        "sina"
+        "sina",
+        "eastmoney"
       ]
     },
     {
