@@ -2,18 +2,18 @@
 
 ## Objective
 
-Implement a model-only CLI that fully exposes AKShare's public data functions. The CLI uses domain-first commands such as `market-cli stock zh-a-hist`, without visible `ak` or `raw` namespaces.
+Provide model-oriented market-data access through `market-cli`, while moving data-source selection, retry and fallback into a Cordis-based service. The existing CLI uses domain-first commands such as `market-cli stock zh-a-hist`, without visible `ak` or `raw` namespaces.
 
 ## Current state
 
 - Workspace: `/Users/mac/code/market-cli`
-- The original AKShare research clone is not present in this workspace and must be recreated when registry implementation begins.
+- The first CLI implementation and tests are present in this workspace.
 - Clone is pinned at AKShare `1.18.82`, commit `e977951ef2cb384eccffa35424c75a51bb5fa1c9` dated 2026-08-06.
 - The upstream research clone must remain untracked.
 - Domain terminology is recorded in `/Users/mac/code/market-cli/CONTEXT.md`.
-- Architectural decisions are recorded in `/Users/mac/code/market-cli/docs/adr/0001-*.md` through `0054-*.md`. Read these rather than recreating or summarising their contents.
-- No CLI implementation or tests have been created yet.
-- The design is complete; no CLI implementation or tests have been created yet.
+- Architectural decisions are recorded in `/Users/mac/code/market-cli/docs/adr/`. Read these rather than recreating or summarising their contents.
+- ADR 0057 selects Cordis as the server plugin host.
+- ADR 0058 establishes one provider-independent instrument catalog for stocks and indices in the first server release.
 
 ## Verified source facts
 
@@ -27,7 +27,7 @@ Implement a model-only CLI that fully exposes AKShare's public data functions. T
 
 ## Active implementation state
 
-The design interview is complete through ADR 0054. The user approved implementation using test-driven vertical slices and requested a Git commit after every independently verified stage.
+The CLI implementation is complete through version `0.1.1`. Server design is complete through ADR 0058. The first server release is limited to stocks and indices, with provider plugins, a unified instrument catalog, deterministic search and contextual resolution. The user approved implementation using independently verified vertical slices and requested a Git commit after every stage.
 
 ## Suggested skills
 
