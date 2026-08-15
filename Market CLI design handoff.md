@@ -13,6 +13,7 @@ Provide model-oriented market-data access through `market-cli`, while moving dat
 - Domain terminology is recorded in `/Users/mac/code/market-cli/CONTEXT.md`.
 - Architectural decisions are recorded in `/Users/mac/code/market-cli/docs/adr/`. Read these rather than recreating or summarising their contents.
 - ADR 0057 selects Cordis as the server plugin host.
+- The initial compatibility baseline is official DeepSeek Harness commit `47f943859bef60e4160492346772ded9b24f765a`, using its vendored `@deepseek-ai/cordis` `4.0.1`.
 - ADR 0058 establishes one provider-independent instrument catalog for stocks and indices in the first server release.
 
 ## Verified source facts
