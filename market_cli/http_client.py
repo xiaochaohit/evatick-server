@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from market_cli import __version__
 from market_cli.supervisor import InvocationError
 
 
@@ -59,7 +60,7 @@ class MarketHttpClient:
             method=method,
             headers={
                 "Accept": "application/json",
-                "User-Agent": "market-cli/0.1",
+                "User-Agent": f"market-cli/{__version__}",
                 **({"Content-Type": "application/json"} if body else {}),
             },
         )

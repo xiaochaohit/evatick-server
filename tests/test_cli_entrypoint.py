@@ -316,7 +316,7 @@ def test_version_reports_cli_provider_and_registry_fingerprint() -> None:
     assert result.returncode == 0
     assert result.stderr == ""
     version = json.loads(result.stdout)
-    assert version["market_cli"] == "0.1.1"
+    assert version["market_cli"] == "0.2.0"
     assert version["providers"] == {"akshare": "1.18.82"}
     assert version["python"] == platform.python_version()
     assert len(version["registry_sha256"]) == 64
