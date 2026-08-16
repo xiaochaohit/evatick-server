@@ -16,10 +16,14 @@ function defaultDataDirectory(): string {
   return join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'market-cli')
 }
 
-function numberFromEnvironment(name: string, fallback: number): number {
+function integerFromEnvironment(
+  name: string,
+  fallback: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
   const value = Number(process.env[name] ?? fallback)
-  if (!Number.isInteger(value) || value < 0 || value > 65_535) {
-    throw new Error(`${name} must be an integer between 0 and 65535`)
+  if (!Number.isInteger(value) || value < 0 || value > maximum) {
+    throw new Error(`${name} must be an integer between 0 and ${maximum}`)
   }
   return value
 }
@@ -30,10 +34,10 @@ export async function startDefaultMarketServer() {
   await mkdir(dirname(catalogPath), { recursive: true })
   const server = await createMarketServer({
     host: process.env.MARKET_SERVER_HOST ?? '127.0.0.1',
-    port: numberFromEnvironment('MARKET_SERVER_PORT', 8765),
+    port: integerFromEnvironment('MARKET_SERVER_PORT', 8765, 65_535),
     catalogPath,
-    retryAttempts: numberFromEnvironment('MARKET_SERVER_RETRY_ATTEMPTS', 2),
-    requestTimeoutMs: numberFromEnvironment('MARKET_SERVER_REQUEST_TIMEOUT_MS', 30_000),
+    retryAttempts: integerFromEnvironment('MARKET_SERVER_RETRY_ATTEMPTS', 2),
+    requestTimeoutMs: integerFromEnvironment('MARKET_SERVER_REQUEST_TIMEOUT_MS', 30_000),
   })
   await server.mountProvider(new MarketCliProvider({
     executable: process.env.MARKET_SERVER_MARKET_CLI ?? 'market-cli',

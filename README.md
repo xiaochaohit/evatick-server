@@ -26,6 +26,38 @@ Use `market-cli DOMAIN COMMAND --help` to inspect provider-aligned named paramet
 
 The accepted terminology lives in [`CONTEXT.md`](./CONTEXT.md), and architectural decisions live in [`docs/adr`](./docs/adr).
 
+## Market Server
+
+The first server release provides a provider-neutral HTTP boundary for mainland
+A-share equities and SSE, SZSE, and CSI indices. It runs on Cordis, persists the
+last successful instrument catalog in SQLite, and owns provider retry, timeout,
+fallback, identifier resolution, and response normalization.
+
+Requirements: Node.js 22.19 or newer and pnpm 11.7.0.
+
+```shell
+python -m pip install -e .
+cd server
+corepack enable
+pnpm install --frozen-lockfile
+pnpm start
+```
+
+The server listens on `http://127.0.0.1:8765` by default. In another terminal,
+point the same CLI at it:
+
+```shell
+export MARKET_CLI_SERVER_URL=http://127.0.0.1:8765
+market-cli instrument search --query 平安银行 --type equity
+market-cli stock bars --symbol 000001 --start-date 20260801 --limit 5
+market-cli index constituents --symbol 000300 --limit 5
+```
+
+Only the published `stock` and `index` paths use the server when configured;
+other provider-aligned commands continue to run locally. `--server-url` can be
+used instead of the environment variable. See [`server/README.md`](./server/README.md)
+for configuration, API routes, and plugin boundaries.
+
 ## Development
 
 Market CLI requires CPython 3.11 or newer.
