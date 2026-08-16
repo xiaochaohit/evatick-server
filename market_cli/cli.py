@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlencode
 
 import click
 from click.core import ParameterSource
@@ -20,6 +21,7 @@ from click.core import ParameterSource
 from market_cli import __version__
 from market_cli.cache import CACHE_MISS, CacheStore
 from market_cli.output import export_result
+from market_cli.http_client import MarketHttpClient, SERVER_COMMANDS, invoke_server
 from market_cli.registry.runtime import load_registry
 from market_cli.serialization import SerializationError, dumps
 from market_cli.supervisor import InvocationError, invoke
@@ -46,6 +48,7 @@ class ModelGroup(click.Group):
         formatter.write("NAME\n    market-cli\n\n")
         formatter.write("PURPOSE\n    为模型提供可发现的市场数据命令。\n\n")
         formatter.write("USAGE\n    market-cli COMMAND [OPTIONS]\n\n")
+        formatter.write("OPTIONS\n    --server-url URL\n\n")
         formatter.write("COMMANDS\n")
         for command_name in self.list_commands(ctx):
             formatter.write(f"    {command_name}\n")
@@ -162,11 +165,14 @@ def _parse_args_json(
 class DataCommand(click.Command):
     def __init__(self, command: dict[str, Any]) -> None:
         self.contract = command
+        data_options = [_click_option(parameter) for parameter in command["parameters"]]
+        if command["path"] == ["stock", "quotes"]:
+            data_options.append(click.Option(["--symbol", "data__symbol"]))
         super().__init__(
             name=command["path"][1],
             callback=self._invoke,
             params=[
-                *[_click_option(parameter) for parameter in command["parameters"]],
+                *data_options,
                 click.Option(
                     ["--limit"],
                     type=click.IntRange(min=1),
@@ -215,6 +221,7 @@ class DataCommand(click.Command):
             name.removeprefix("data__"): value for name, value in parameters.items()
         }
         context = click.get_current_context()
+        server_url = context.find_root().params.get("server_url")
         if args_json is None:
             for parameter in self.contract["parameters"]:
                 if not parameter["required"]:
@@ -260,17 +267,28 @@ class DataCommand(click.Command):
             else cache_store.get(cache_key, cache_ttl)
         )
         if result is CACHE_MISS:
-            result = invoke(
-                provider=provider_name,
-                function=self.contract["function"],
-                adapter=self.contract.get("adapter"),
-                parameters=data_parameters,
-                secret_parameters=secret_parameters,
-                timeout=timeout,
-                retries=retries,
-                debug_output=debug_output,
-                overwrite=overwrite,
-            )
+            command_path = tuple(self.contract["path"])
+            if server_url and command_path in SERVER_COMMANDS:
+                result = invoke_server(
+                    server_url=server_url,
+                    path=command_path,
+                    parameters=data_parameters,
+                    limit=limit,
+                    timeout=timeout,
+                    retries=retries,
+                )
+            else:
+                result = invoke(
+                    provider=provider_name,
+                    function=self.contract["function"],
+                    adapter=self.contract.get("adapter"),
+                    parameters=data_parameters,
+                    secret_parameters=secret_parameters,
+                    timeout=timeout,
+                    retries=retries,
+                    debug_output=debug_output,
+                    overwrite=overwrite,
+                )
             if cache_store is not None:
                 cache_store.set(cache_key, result, cache_ttl)
         if output is None:
@@ -333,8 +351,144 @@ class DataCommand(click.Command):
 
 
 @click.group(cls=RegistryRootGroup)
-def cli() -> None:
+@click.option("--server-url", envvar="MARKET_CLI_SERVER_URL")
+def cli(server_url: str | None) -> None:
     """Market CLI root command."""
+
+
+def _market_http_client(timeout: float, retries: int) -> MarketHttpClient:
+    server_url = click.get_current_context().find_root().params.get("server_url")
+    if not server_url:
+        raise click.UsageError(
+            "instrument commands require --server-url or MARKET_CLI_SERVER_URL"
+        )
+    return MarketHttpClient(server_url, timeout, retries)
+
+
+@cli.group("instrument")
+def instrument_group() -> None:
+    """Discover and resolve canonical instruments from Market Server."""
+
+
+@instrument_group.command("search")
+@click.option("--query", required=True)
+@click.option("--type", "instrument_type", type=click.Choice(["equity", "index"]))
+@click.option("--venue")
+@click.option("--publisher")
+@click.option("--capability", type=click.Choice(["quote", "bars", "constituents"]))
+@click.option("--limit", type=click.IntRange(min=1, max=200), default=20)
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=120.0)
+@click.option("--retries", type=click.IntRange(min=0), default=2)
+def instrument_search_command(
+    query: str,
+    instrument_type: str | None,
+    venue: str | None,
+    publisher: str | None,
+    capability: str | None,
+    limit: int,
+    timeout: float,
+    retries: int,
+) -> None:
+    parameters = {
+        "q": query,
+        "instrument_type": instrument_type,
+        "venue": venue,
+        "publisher": publisher,
+        "capability": capability,
+        "limit": limit,
+    }
+    query_string = urlencode(
+        {key: value for key, value in parameters.items() if value is not None}
+    )
+    response = _market_http_client(timeout, retries).request(
+        "GET", f"/v1/instrument-search?{query_string}"
+    )
+    click.echo(dumps(response.get("data", []), limit=limit))
+
+
+@instrument_group.command("resolve")
+@click.option("--query", required=True)
+@click.option("--type", "instrument_type", type=click.Choice(["equity", "index"]))
+@click.option("--venue")
+@click.option("--publisher")
+@click.option("--capability", type=click.Choice(["quote", "bars", "constituents"]))
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=120.0)
+@click.option("--retries", type=click.IntRange(min=0), default=2)
+def instrument_resolve_command(
+    query: str,
+    instrument_type: str | None,
+    venue: str | None,
+    publisher: str | None,
+    capability: str | None,
+    timeout: float,
+    retries: int,
+) -> None:
+    context = {
+        "instrument_type": instrument_type,
+        "venue": venue,
+        "publisher": publisher,
+        "capability": capability,
+    }
+    response = _market_http_client(timeout, retries).request(
+        "POST",
+        "/v1/instrument-resolve",
+        {"query": query, "context": {
+            key: value for key, value in context.items() if value is not None
+        }},
+    )
+    click.echo(dumps(response.get("data", {})))
+
+
+@instrument_group.command("show")
+@click.option("--id", "instrument_id", required=True)
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=120.0)
+@click.option("--retries", type=click.IntRange(min=0), default=2)
+def instrument_show_command(
+    instrument_id: str, timeout: float, retries: int
+) -> None:
+    response = _market_http_client(timeout, retries).request(
+        "GET", f"/v1/instruments/{quote(instrument_id, safe='')}"
+    )
+    click.echo(dumps(response.get("data", {})))
+
+
+@instrument_group.command("list")
+@click.option("--type", "instrument_type", type=click.Choice(["equity", "index"]))
+@click.option("--venue")
+@click.option("--publisher")
+@click.option("--capability", type=click.Choice(["quote", "bars", "constituents"]))
+@click.option("--limit", type=click.IntRange(min=1, max=1000), default=100)
+@click.option("--cursor")
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=120.0)
+@click.option("--retries", type=click.IntRange(min=0), default=2)
+def instrument_list_command(
+    instrument_type: str | None,
+    venue: str | None,
+    publisher: str | None,
+    capability: str | None,
+    limit: int,
+    cursor: str | None,
+    timeout: float,
+    retries: int,
+) -> None:
+    parameters = {
+        "instrument_type": instrument_type,
+        "venue": venue,
+        "publisher": publisher,
+        "capability": capability,
+        "limit": limit,
+        "cursor": cursor,
+    }
+    query_string = urlencode(
+        {key: value for key, value in parameters.items() if value is not None}
+    )
+    response = _market_http_client(timeout, retries).request(
+        "GET", f"/v1/instruments?{query_string}"
+    )
+    click.echo(dumps({
+        "items": response.get("data", []),
+        "next_cursor": response.get("page", {}).get("next_cursor"),
+    }))
 
 
 @cli.command("catalog")
