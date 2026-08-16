@@ -183,6 +183,19 @@ export class MarketHttpService extends Service {
         request_id: `req_${randomUUID()}`,
       })
 
+    this.app.get('/v1/health', async () => {
+      const providers = ctx.marketProviderRegistry.list().length
+      return {
+        schema: 'market.health.v1',
+        data: {
+          status: providers > 0 ? 'ok' : 'degraded',
+          providers,
+          version: '1.0.0',
+          uptime_seconds: Math.floor(process.uptime()),
+        },
+      }
+    })
+
     this.app.get<{
       Querystring: {
         instrument_type?: InstrumentType
@@ -612,9 +625,9 @@ export class MarketHttpService extends Service {
     ctx.effect(() => () => this.close())
   }
 
-  async listen(): Promise<string> {
+  async listen(host = '127.0.0.1', port = 0): Promise<string> {
     if (!this.address) {
-      this.address = await this.app.listen({ host: '127.0.0.1', port: 0 })
+      this.address = await this.app.listen({ host, port })
     }
     return this.address
   }

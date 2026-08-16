@@ -23,6 +23,8 @@ export interface MarketServerOptions {
   retryAttempts?: number
   requestTimeoutMs?: number
   catalogPath?: string
+  host?: string
+  port?: number
 }
 
 export async function createMarketServer(
@@ -38,7 +40,7 @@ export async function createMarketServer(
   await storeFiber.await()
   const httpFiber: Fiber = ctx.plugin(MarketHttpService, options)
   await httpFiber.await()
-  const url = await ctx.marketHttp.listen()
+  const url = await ctx.marketHttp.listen(options.host, options.port)
 
   return {
     url,

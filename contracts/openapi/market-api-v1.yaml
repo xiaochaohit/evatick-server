@@ -4,6 +4,17 @@ info:
   version: 1.0.0
   description: Provider-independent market data API for Market CLI.
 paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Report process liveness and provider readiness
+      responses:
+        '200':
+          description: Current service health.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
   /v1/instruments:
     get:
       operationId: listInstruments
@@ -224,6 +235,29 @@ components:
       schema:
         type: string
   schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data]
+      properties:
+        schema:
+          const: market.health.v1
+        data:
+          type: object
+          additionalProperties: false
+          required: [status, providers, version, uptime_seconds]
+          properties:
+            status:
+              type: string
+              enum: [ok, degraded]
+            providers:
+              type: integer
+              minimum: 0
+            version:
+              type: string
+            uptime_seconds:
+              type: integer
+              minimum: 0
     InstrumentCapability:
       type: string
       enum: [quote, bars, constituents]
