@@ -3,34 +3,19 @@ from __future__ import annotations
 import json
 import socket
 import time
-from datetime import datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from market_cli import __version__
-from market_cli.supervisor import InvocationError
 
 
-SERVER_COMMANDS = {
-    ("stock", "instruments"),
-    ("stock", "quotes"),
-    ("stock", "bars"),
-    ("index", "instruments"),
-    ("index", "quotes"),
-    ("index", "bars"),
-    ("index", "constituents"),
-}
-
-
-def _date(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    text = str(value)
-    if len(text) == 8 and text.isdigit():
-        return datetime.strptime(text, "%Y%m%d").date().isoformat()
-    return text
+class InvocationError(Exception):
+    def __init__(self, code: str, message: str, retryable: bool) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
 
 
 class MarketHttpClient:
@@ -135,90 +120,3 @@ class MarketHttpClient:
             "instrument input did not resolve to one supported instrument",
             False,
         )
-
-
-def _unwrap(response: dict[str, Any]) -> Any:
-    if "data" not in response:
-        raise InvocationError(
-            "INVALID_SERVER_RESPONSE",
-            "server response is missing data",
-            False,
-        )
-    return response["data"]
-
-
-def invoke_server(
-    *,
-    server_url: str,
-    path: tuple[str, str],
-    parameters: dict[str, Any],
-    limit: int | None,
-    timeout: float,
-    retries: int,
-) -> Any:
-    domain, command = path
-    instrument_type = "equity" if domain == "stock" else "index"
-    client = MarketHttpClient(server_url, timeout, retries)
-
-    if command == "instruments":
-        items: list[Any] = []
-        cursor: str | None = None
-        while limit is None or len(items) < limit:
-            page_limit = min(1000, (limit - len(items)) if limit is not None else 1000)
-            query = urlencode({
-                "instrument_type": instrument_type,
-                "limit": page_limit,
-                **({"cursor": cursor} if cursor else {}),
-            })
-            response = client.request("GET", f"/v1/instruments?{query}")
-            page_items = _unwrap(response)
-            if not isinstance(page_items, list):
-                raise InvocationError(
-                    "INVALID_SERVER_RESPONSE",
-                    "instrument list data is not an array",
-                    False,
-                )
-            items.extend(page_items)
-            cursor = response.get("page", {}).get("next_cursor")
-            if not cursor:
-                break
-        return items
-
-    symbol = parameters.get("symbol")
-    if not symbol:
-        raise InvocationError(
-            "MISSING_INSTRUMENT",
-            f"market-cli {domain} {command} requires --symbol in server mode",
-            False,
-        )
-    capability = {
-        "quotes": "quote",
-        "bars": "bars",
-        "constituents": "constituents",
-    }[command]
-    instrument_id = client.resolve(str(symbol), instrument_type, capability)
-    encoded_id = quote(instrument_id, safe="")
-
-    if command == "quotes":
-        return _unwrap(client.request("GET", f"/v1/instruments/{encoded_id}/quote"))
-    if command == "constituents":
-        query_values = {"as_of": _date(parameters.get("as_of"))}
-        query = urlencode({key: value for key, value in query_values.items() if value})
-        suffix = f"?{query}" if query else ""
-        return _unwrap(client.request("GET", f"/v1/indices/{encoded_id}/constituents{suffix}"))
-
-    period = parameters.get("period", "daily")
-    interval = {"daily": "1d", "weekly": "1w", "monthly": "1mo"}.get(
-        str(period), "1d"
-    )
-    adjustment = {"qfq": "forward", "hfq": "backward"}.get(
-        str(parameters.get("adjust", "")), "none"
-    )
-    query_values = {
-        "interval": interval,
-        "start": _date(parameters.get("start_date")),
-        "end": _date(parameters.get("end_date")),
-        "adjustment": adjustment,
-    }
-    query = urlencode({key: value for key, value in query_values.items() if value})
-    return _unwrap(client.request("GET", f"/v1/instruments/{encoded_id}/bars?{query}"))
