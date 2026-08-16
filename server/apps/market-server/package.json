@@ -3,10 +3,14 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@market-cli/catalog-sqlite": "workspace:*",
     "@market-cli/core": "workspace:*",
+    "@market-cli/provider-market-cli": "workspace:*",
     "@market-cli/cordis-runtime": "workspace:*",
     "@market-cli/transport-http": "workspace:*"
   }

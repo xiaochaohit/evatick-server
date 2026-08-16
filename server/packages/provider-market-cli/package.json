@@ -1,0 +1,9 @@
+{
+  "name": "@market-cli/provider-market-cli",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@market-cli/core": "workspace:*"
+  }
+}
