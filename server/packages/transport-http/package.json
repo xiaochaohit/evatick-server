@@ -1,0 +1,12 @@
+{
+  "name": "@market-cli/transport-http",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@market-cli/core": "workspace:*",
+    "@market-cli/cordis-runtime": "workspace:*",
+    "fastify": "5.12.0"
+  }
+}

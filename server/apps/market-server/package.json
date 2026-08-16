@@ -1,0 +1,12 @@
+{
+  "name": "@market-cli/server",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@market-cli/core": "workspace:*",
+    "@market-cli/cordis-runtime": "workspace:*",
+    "@market-cli/transport-http": "workspace:*"
+  }
+}

@@ -1,0 +1,134 @@
+openapi: 3.1.0
+info:
+  title: Market Server API
+  version: 1.0.0
+  description: Provider-independent market data API for Market CLI.
+paths:
+  /v1/instruments:
+    get:
+      operationId: listInstruments
+      summary: List supported financial instruments
+      responses:
+        '200':
+          description: Supported instruments from active providers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentListResponse'
+        default:
+          description: Request failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    Instrument:
+      type: object
+      additionalProperties: false
+      required:
+        - instrument_id
+        - instrument_type
+        - name
+        - symbol
+        - venue
+        - publisher
+        - currency
+        - status
+      properties:
+        instrument_id:
+          type: string
+        instrument_type:
+          type: string
+          enum: [equity, index]
+        name:
+          type: string
+        symbol:
+          type: string
+        venue:
+          type: [string, 'null']
+        publisher:
+          type: [string, 'null']
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive]
+    Page:
+      type: object
+      additionalProperties: false
+      required: [next_cursor]
+      properties:
+        next_cursor:
+          type: [string, 'null']
+    Source:
+      type: object
+      additionalProperties: false
+      required: [provider, fetched_at]
+      properties:
+        provider:
+          type: string
+        fetched_at:
+          type: string
+          format: date-time
+    ResponseMeta:
+      type: object
+      additionalProperties: false
+      required:
+        - request_id
+        - generated_at
+        - partial
+        - sources
+        - warnings
+      properties:
+        request_id:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        partial:
+          type: boolean
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+        warnings:
+          type: array
+          items:
+            type: string
+    InstrumentListResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, page, meta]
+      properties:
+        schema:
+          const: market.instrument-list.v1
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Instrument'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    Problem:
+      type: object
+      required: [type, title, status, code, retryable]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        code:
+          type: string
+        retryable:
+          type: boolean
+        request_id:
+          type: string
