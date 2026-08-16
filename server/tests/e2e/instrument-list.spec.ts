@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { createMarketServer, type InstrumentProvider } from '@market-cli/server'
+import {
+  createMarketServer,
+  ProviderError,
+  type InstrumentProvider,
+} from '@market-cli/server'
 
 describe('instrument provider lifecycle over HTTP', () => {
   it('lists provider instruments and removes them after plugin disposal', async () => {
@@ -157,6 +161,54 @@ describe('instrument provider lifecycle over HTTP', () => {
           capabilities: ['bars', 'quote'],
         },
       ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('keeps a partial catalog when one provider is temporarily unavailable', async () => {
+    let failures = 0
+    const unavailable: InstrumentProvider = {
+      id: 'unavailable-catalog',
+      async listInstruments() {
+        failures += 1
+        throw new ProviderError('PROVIDER_NETWORK_ERROR', 'temporary failure', true)
+      },
+    }
+    const available: InstrumentProvider = {
+      id: 'available-catalog',
+      async listInstruments() {
+        return [
+          {
+            type: 'equity',
+            market: 'CN',
+            name: '浦发银行',
+            symbol: '600000',
+            providerSymbol: 'sh600000',
+            venue: 'XSHG',
+            currency: 'CNY',
+            status: 'active',
+            capabilities: ['quote'],
+          },
+        ]
+      },
+    }
+    const server = await createMarketServer({ retryAttempts: 2 })
+    await server.mountProvider(unavailable)
+    await server.mountProvider(available)
+
+    try {
+      const response = await fetch(`${server.url}/v1/instruments`)
+      expect(response.status).toBe(200)
+      expect(failures).toBe(2)
+      expect(await response.json()).toMatchObject({
+        data: [{ instrument_id: 'cn:equity:XSHG:600000' }],
+        meta: {
+          partial: true,
+          sources: [{ provider: 'available-catalog' }],
+          warnings: ['provider unavailable-catalog failed: PROVIDER_NETWORK_ERROR'],
+        },
+      })
     } finally {
       await server.close()
     }

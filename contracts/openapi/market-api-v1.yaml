@@ -103,8 +103,92 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/instruments/{instrument_id}/quote:
+    get:
+      operationId: getQuote
+      summary: Get the latest quote for an instrument
+      parameters:
+        - $ref: '#/components/parameters/InstrumentId'
+      responses:
+        '200':
+          description: Latest normalized quote.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+        default:
+          description: Request or provider failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/instruments/{instrument_id}/bars:
+    get:
+      operationId: getBars
+      summary: Get normalized OHLCV bars for an instrument
+      parameters:
+        - $ref: '#/components/parameters/InstrumentId'
+        - name: interval
+          in: query
+          schema:
+            $ref: '#/components/schemas/BarInterval'
+        - name: start
+          in: query
+          schema:
+            type: string
+        - name: end
+          in: query
+          schema:
+            type: string
+        - name: adjustment
+          in: query
+          schema:
+            $ref: '#/components/schemas/PriceAdjustment'
+      responses:
+        '200':
+          description: Chronologically ordered bars.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarListResponse'
+        default:
+          description: Request or provider failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/indices/{instrument_id}/constituents:
+    get:
+      operationId: getIndexConstituents
+      summary: Get index constituent memberships
+      parameters:
+        - $ref: '#/components/parameters/InstrumentId'
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Index constituents effective on the requested date.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexConstituentListResponse'
+        default:
+          description: Request or provider failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   parameters:
+    InstrumentId:
+      name: instrument_id
+      in: path
+      required: true
+      schema:
+        type: string
     InstrumentType:
       name: instrument_type
       in: query
@@ -143,6 +227,14 @@ components:
     InstrumentCapability:
       type: string
       enum: [quote, bars, constituents]
+    BarInterval:
+      type: string
+      enum: [1m, 5m, 15m, 30m, 60m, 1d, 1w, 1mo]
+      default: 1d
+    PriceAdjustment:
+      type: string
+      enum: [none, forward, backward]
+      default: none
     Instrument:
       type: object
       additionalProperties: false
@@ -190,12 +282,16 @@ components:
     ProviderIdentifier:
       type: object
       additionalProperties: false
-      required: [provider, value]
+      required: [provider, value, capabilities]
       properties:
         provider:
           type: string
         value:
           type: string
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstrumentCapability'
     InstrumentDetail:
       allOf:
         - $ref: '#/components/schemas/Instrument'
@@ -352,6 +448,191 @@ components:
           const: market.instrument-resolution.v1
         data:
           $ref: '#/components/schemas/InstrumentResolutionData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    Quote:
+      type: object
+      additionalProperties: false
+      required:
+        - instrument_id
+        - symbol
+        - name
+        - venue
+        - publisher
+        - currency
+        - market_time
+        - observed_at
+        - market_status
+        - last
+        - open
+        - high
+        - low
+        - previous_close
+        - volume
+        - turnover
+      properties:
+        instrument_id:
+          type: string
+        symbol:
+          type: string
+        name:
+          type: string
+        venue:
+          type: [string, 'null']
+        publisher:
+          type: [string, 'null']
+        currency:
+          type: string
+        market_time:
+          type: [string, 'null']
+          format: date-time
+        observed_at:
+          type: string
+          format: date-time
+        market_status:
+          type: string
+          enum: [trading, closed, halted, auction, unknown]
+        last:
+          type: [string, 'null']
+        open:
+          type: [string, 'null']
+        high:
+          type: [string, 'null']
+        low:
+          type: [string, 'null']
+        previous_close:
+          type: [string, 'null']
+        volume:
+          type: [integer, 'null']
+        turnover:
+          type: [string, 'null']
+    QuoteResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, meta]
+      properties:
+        schema:
+          const: market.quote.v1
+        data:
+          $ref: '#/components/schemas/Quote'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    Bar:
+      type: object
+      additionalProperties: false
+      required:
+        - instrument_id
+        - interval
+        - trading_date
+        - period_start
+        - period_end
+        - currency
+        - open
+        - high
+        - low
+        - close
+        - volume
+        - turnover
+        - adjustment
+        - complete
+      properties:
+        instrument_id:
+          type: string
+        interval:
+          $ref: '#/components/schemas/BarInterval'
+        trading_date:
+          type: string
+          format: date
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        currency:
+          type: string
+        open:
+          type: string
+        high:
+          type: string
+        low:
+          type: string
+        close:
+          type: string
+        volume:
+          type: [integer, 'null']
+        turnover:
+          type: [string, 'null']
+        adjustment:
+          $ref: '#/components/schemas/PriceAdjustment'
+        complete:
+          type: boolean
+    BarListResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, page, meta]
+      properties:
+        schema:
+          const: market.bar-list.v1
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bar'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    IndexConstituent:
+      type: object
+      additionalProperties: false
+      required:
+        - index_id
+        - constituent_id
+        - constituent_symbol
+        - constituent_name
+        - constituent_venue
+        - as_of_date
+        - effective_from
+        - effective_to
+        - weight_ratio
+        - rank
+      properties:
+        index_id:
+          type: string
+        constituent_id:
+          type: string
+        constituent_symbol:
+          type: string
+        constituent_name:
+          type: string
+        constituent_venue:
+          type: [string, 'null']
+        as_of_date:
+          type: string
+          format: date
+        effective_from:
+          type: [string, 'null']
+          format: date
+        effective_to:
+          type: [string, 'null']
+          format: date
+        weight_ratio:
+          type: [string, 'null']
+        rank:
+          type: [integer, 'null']
+    IndexConstituentListResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, page, meta]
+      properties:
+        schema:
+          const: market.index-constituent-list.v1
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/IndexConstituent'
+        page:
+          $ref: '#/components/schemas/Page'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
     Problem:

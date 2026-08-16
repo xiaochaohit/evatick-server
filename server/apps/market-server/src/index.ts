@@ -14,11 +14,18 @@ export interface MarketServer {
   close(): Promise<void>
 }
 
-export async function createMarketServer(): Promise<MarketServer> {
+export interface MarketServerOptions {
+  retryAttempts?: number
+  requestTimeoutMs?: number
+}
+
+export async function createMarketServer(
+  options: MarketServerOptions = {},
+): Promise<MarketServer> {
   const ctx = new Context()
   const registryFiber: Fiber = ctx.plugin(MarketProviderRegistry)
   await registryFiber.await()
-  const httpFiber: Fiber = ctx.plugin(MarketHttpService)
+  const httpFiber: Fiber = ctx.plugin(MarketHttpService, options)
   await httpFiber.await()
   const url = await ctx.marketHttp.listen()
 
@@ -34,4 +41,7 @@ export async function createMarketServer(): Promise<MarketServer> {
   }
 }
 
-export type { InstrumentProvider } from '@market-cli/core'
+export {
+  ProviderError,
+  type InstrumentProvider,
+} from '@market-cli/core'

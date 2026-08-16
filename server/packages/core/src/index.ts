@@ -4,6 +4,72 @@ export type InstrumentStatus = 'active' | 'inactive'
 
 export type InstrumentCapability = 'quote' | 'bars' | 'constituents'
 
+export type BarInterval =
+  | '1m'
+  | '5m'
+  | '15m'
+  | '30m'
+  | '60m'
+  | '1d'
+  | '1w'
+  | '1mo'
+
+export type PriceAdjustment = 'none' | 'forward' | 'backward'
+
+export interface ProviderCall {
+  providerSymbol: string
+  signal: AbortSignal
+}
+
+export interface ProviderQuote {
+  marketTime?: string | null
+  currency: string
+  marketStatus: 'trading' | 'closed' | 'halted' | 'auction' | 'unknown'
+  last: string | null
+  open: string | null
+  high: string | null
+  low: string | null
+  previousClose: string | null
+  volume: number | null
+  turnover: string | null
+}
+
+export interface ProviderBar {
+  interval: BarInterval
+  tradingDate: string
+  periodStart: string
+  periodEnd: string
+  currency: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: number | null
+  turnover: string | null
+  adjustment: PriceAdjustment
+  complete: boolean
+}
+
+export interface BarsCall extends ProviderCall {
+  interval: BarInterval
+  start?: string
+  end?: string
+  adjustment: PriceAdjustment
+}
+
+export interface ProviderConstituent {
+  constituentProviderSymbol: string
+  asOfDate: string
+  effectiveFrom: string | null
+  effectiveTo: string | null
+  weightRatio: string | null
+  rank: number | null
+}
+
+export interface ConstituentsCall extends ProviderCall {
+  asOf?: string
+}
+
 export interface ProviderInstrument {
   type: InstrumentType
   market: 'CN'
@@ -21,11 +87,17 @@ export interface ProviderInstrument {
 export interface InstrumentProvider {
   readonly id: string
   listInstruments(): Promise<readonly ProviderInstrument[]>
+  getQuote?(call: ProviderCall): Promise<ProviderQuote>
+  getBars?(call: BarsCall): Promise<readonly ProviderBar[]>
+  getConstituents?(
+    call: ConstituentsCall,
+  ): Promise<readonly ProviderConstituent[]>
 }
 
 export interface ProviderIdentifier {
   provider: string
   value: string
+  capabilities: readonly InstrumentCapability[]
 }
 
 export interface CatalogInstrument {
@@ -102,7 +174,11 @@ export function buildInstrumentCatalog(
         const aliases = new Set(candidate.aliases ?? [])
         const capabilities = new Set(candidate.capabilities)
         const identifiers = [
-          { provider: group.provider, value: candidate.providerSymbol },
+          {
+            provider: group.provider,
+            value: candidate.providerSymbol,
+            capabilities: [...candidate.capabilities].sort(),
+          },
         ]
         entries.set(instrumentId, {
           aliases,
@@ -136,6 +212,7 @@ export function buildInstrumentCatalog(
       existing.identifiers.push({
         provider: group.provider,
         value: candidate.providerSymbol,
+        capabilities: [...candidate.capabilities].sort(),
       })
     }
   }
@@ -150,6 +227,164 @@ export function buildInstrumentCatalog(
       ),
     }))
     .sort((left, right) => left.instrumentId.localeCompare(right.instrumentId))
+}
+
+export class ProviderError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message)
+    this.name = 'ProviderError'
+  }
+}
+
+export class ProviderRoutingError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message)
+    this.name = 'ProviderRoutingError'
+  }
+}
+
+export interface RoutedResult<T> {
+  value: T
+  provider: string
+  attempts: number
+  observedAt: string
+}
+
+async function withProviderTimeout<T>(
+  timeoutMs: number,
+  invoke: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      invoke(controller.signal),
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort()
+          reject(
+            new ProviderError(
+              'PROVIDER_TIMEOUT',
+              'provider request exceeded its deadline',
+              true,
+            ),
+          )
+        }, timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+export async function retryProviderCall<T>(options: {
+  retryAttempts: number
+  timeoutMs: number
+  invoke: (signal: AbortSignal) => Promise<T>
+}): Promise<{ value: T; attempts: number }> {
+  let lastError: ProviderError | undefined
+  const attempts = Math.max(options.retryAttempts, 1)
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const value = await withProviderTimeout(options.timeoutMs, options.invoke)
+      return { value, attempts: attempt }
+    } catch (error) {
+      const normalized =
+        error instanceof ProviderError
+          ? error
+          : new ProviderError('PROVIDER_ERROR', 'provider request failed', true)
+      lastError = normalized
+      if (!normalized.retryable) throw normalized
+    }
+  }
+  throw lastError ?? new ProviderError('PROVIDER_ERROR', 'provider request failed', true)
+}
+
+export async function routeInstrumentData<T>(options: {
+  providers: readonly InstrumentProvider[]
+  instrument: CatalogInstrument
+  capability: InstrumentCapability
+  retryAttempts: number
+  timeoutMs: number
+  supports: (provider: InstrumentProvider) => boolean
+  invoke: (
+    provider: InstrumentProvider,
+    providerSymbol: string,
+    signal: AbortSignal,
+  ) => Promise<T> | undefined
+}): Promise<RoutedResult<T>> {
+  let totalAttempts = 0
+  let lastError: ProviderError | undefined
+  for (const provider of options.providers) {
+    const identifier = options.instrument.identifiers.find(
+      (candidate) =>
+        candidate.provider === provider.id &&
+        candidate.capabilities.includes(options.capability),
+    )
+    if (!identifier) continue
+    if (!options.supports(provider)) continue
+
+    for (let attempt = 0; attempt < options.retryAttempts; attempt += 1) {
+      totalAttempts += 1
+      try {
+        const value = await withProviderTimeout(options.timeoutMs, (signal) => {
+          const result = options.invoke(provider, identifier.value, signal)
+          if (!result) {
+            throw new ProviderError(
+              'CAPABILITY_UNAVAILABLE',
+              'provider does not implement the declared capability',
+              false,
+            )
+          }
+          return result
+        })
+        return {
+          value,
+          provider: provider.id,
+          attempts: totalAttempts,
+          observedAt: new Date().toISOString(),
+        }
+      } catch (error) {
+        const normalized =
+          error instanceof ProviderError
+            ? error
+            : new ProviderError(
+                'PROVIDER_ERROR',
+                'provider request failed',
+                true,
+              )
+        lastError = normalized
+        if (!normalized.retryable) {
+          throw new ProviderRoutingError(
+            normalized.code,
+            normalized.message,
+            false,
+          )
+        }
+      }
+    }
+  }
+
+  if (lastError) {
+    throw new ProviderRoutingError(
+      'ALL_PROVIDERS_FAILED',
+      'all eligible providers failed',
+      true,
+    )
+  }
+  throw new ProviderRoutingError(
+    'CAPABILITY_UNAVAILABLE',
+    'no provider supports this capability for the instrument',
+    false,
+  )
 }
 
 function normalizeSearchText(value: string): string {

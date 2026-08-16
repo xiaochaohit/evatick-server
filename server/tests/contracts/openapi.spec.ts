@@ -30,5 +30,14 @@ describe('public HTTP contract', () => {
     expect(paths['/v1/instrument-resolve']?.post?.operationId).toBe(
       'resolveInstrument',
     )
+    expect(paths['/v1/instruments/{instrument_id}/quote']?.get?.operationId).toBe(
+      'getQuote',
+    )
+    expect(paths['/v1/instruments/{instrument_id}/bars']?.get?.operationId).toBe(
+      'getBars',
+    )
+    expect(
+      paths['/v1/indices/{instrument_id}/constituents']?.get?.operationId,
+    ).toBe('getIndexConstituents')
   })
 })
