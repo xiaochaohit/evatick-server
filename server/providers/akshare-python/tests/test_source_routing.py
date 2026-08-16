@@ -17,7 +17,75 @@ class SourceRoutingTest(unittest.TestCase):
         self.assertEqual(
             SOURCE_ORDER["index_bars"], ("sina", "tencent", "eastmoney")
         )
+        self.assertEqual(
+            SOURCE_ORDER["equity_intraday_bars"], ("sina", "eastmoney")
+        )
+        self.assertEqual(
+            SOURCE_ORDER["index_intraday_bars"], ("sina", "eastmoney")
+        )
         self.assertIsNot(SOURCE_ORDER["equity_bars"], SOURCE_ORDER["index_bars"])
+
+    def test_equity_intraday_bars_fall_back_and_keep_the_requested_period(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def sina(**kwargs):
+            calls.append(("sina", kwargs["period"]))
+            raise requests.ConnectionError("sina unavailable")
+
+        def eastmoney(**kwargs):
+            calls.append(("eastmoney", kwargs["period"]))
+            return [{"时间": "2026-08-14 09:35:00", "收盘": 11.22}]
+
+        fake_akshare = SimpleNamespace(
+            stock_zh_a_minute=sina,
+            stock_zh_a_hist_min_em=eastmoney,
+        )
+        with patch.dict(sys.modules, {"akshare": fake_akshare}):
+            result = execute(
+                {
+                    "operation": "bars",
+                    "instrumentType": "equity",
+                    "providerSymbol": "sz000001",
+                    "interval": "5m",
+                    "start": "2026-08-14",
+                    "end": "2026-08-14",
+                    "adjustment": "none",
+                }
+            )
+
+        self.assertEqual(calls, [("sina", "5"), ("eastmoney", "5")])
+        self.assertEqual(result["source"], "eastmoney")
+
+    def test_intraday_bars_try_the_next_source_when_history_is_unavailable(self) -> None:
+        calls: list[str] = []
+
+        def sina(**_kwargs):
+            calls.append("sina")
+            return []
+
+        def eastmoney(**_kwargs):
+            calls.append("eastmoney")
+            return [{"时间": "2025-01-02 09:35:00", "收盘": 10.5}]
+
+        fake_akshare = SimpleNamespace(
+            stock_zh_a_minute=sina,
+            stock_zh_a_hist_min_em=eastmoney,
+        )
+        with patch.dict(sys.modules, {"akshare": fake_akshare}):
+            result = execute(
+                {
+                    "operation": "bars",
+                    "instrumentType": "equity",
+                    "providerSymbol": "sz000001",
+                    "interval": "5m",
+                    "start": "2025-01-02",
+                    "end": "2025-01-02",
+                    "adjustment": "none",
+                }
+            )
+
+        self.assertEqual(calls, ["sina", "eastmoney"])
+        self.assertEqual(result["source"], "eastmoney")
 
     def test_index_bars_fall_back_in_order_and_report_actual_source(self) -> None:
         calls: list[str] = []

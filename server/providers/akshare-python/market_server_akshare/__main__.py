@@ -115,6 +115,79 @@ def _filter_dates(
     return filtered
 
 
+def _date_time_bound(value: str | None, fallback: str, end: bool = False) -> str:
+    if not value:
+        return fallback
+    normalized = value.replace("T", " ")
+    if len(normalized) == 10:
+        return f"{normalized} {'23:59:59' if end else '00:00:00'}"
+    return normalized[:19]
+
+
+def _filter_times(
+    records: list[dict[str, Any]], request: dict[str, Any]
+) -> list[dict[str, Any]]:
+    start = _date_time_bound(request.get("start"), "1970-01-01 00:00:00")
+    end = _date_time_bound(request.get("end"), "2050-01-01 23:59:59", end=True)
+    return [
+        record
+        for record in records
+        if start
+        <= str(record.get("day", record.get("时间", record.get("datetime", ""))))[:19]
+        <= end
+    ]
+
+
+def _intraday_bars(
+    akshare: Any, request: dict[str, Any], source: str
+) -> list[dict[str, Any]]:
+    instrument_type = request["instrumentType"]
+    provider_symbol = request["providerSymbol"]
+    symbol = (
+        _index_symbol(provider_symbol)
+        if instrument_type == "index"
+        else provider_symbol
+    )
+    numeric_symbol = symbol.removeprefix("sh").removeprefix("sz").removeprefix("bj")
+    period = request["interval"].removesuffix("m")
+    adjustment = {"none": "", "forward": "qfq", "backward": "hfq"}[
+        request.get("adjustment", "none")
+    ]
+    if source == "sina":
+        return _filter_times(
+            _records(akshare.stock_zh_a_minute(
+                symbol=symbol,
+                period=period,
+                adjust=adjustment,
+            )),
+            request,
+        )
+    if source == "eastmoney" and instrument_type == "equity":
+        return _records(akshare.stock_zh_a_hist_min_em(
+            symbol=numeric_symbol,
+            start_date=_date_time_bound(
+                request.get("start"), "1979-09-01 09:32:00"
+            ),
+            end_date=_date_time_bound(
+                request.get("end"), "2222-01-01 15:00:00", end=True
+            ),
+            period=period,
+            adjust=adjustment,
+        ))
+    if source == "eastmoney" and instrument_type == "index":
+        return _records(akshare.index_zh_a_hist_min_em(
+            symbol=numeric_symbol,
+            period=period,
+            start_date=_date_time_bound(
+                request.get("start"), "1979-09-01 09:32:00"
+            ),
+            end_date=_date_time_bound(
+                request.get("end"), "2222-01-01 15:00:00", end=True
+            ),
+        ))
+    raise ValueError(f"unsupported intraday source: {source}")
+
+
 def _index_bars(
     akshare: Any, request: dict[str, Any], source: str
 ) -> list[dict[str, Any]]:
@@ -145,7 +218,12 @@ def _market_data(
 ) -> dict[str, Any]:
     instrument_type = request["instrumentType"]
     operation = request["operation"]
-    key = f"{instrument_type}_{operation}"
+    intraday = operation == "bars" and request.get("interval", "1d") != "1d"
+    key = (
+        f"{instrument_type}_intraday_bars"
+        if intraday
+        else f"{instrument_type}_{operation}"
+    )
     source_request = request
     if operation == "quote":
         today = datetime.now().date()
@@ -155,8 +233,13 @@ def _market_data(
             "end": today.isoformat(),
             "adjustment": "none",
         }
-    loader = _equity_bars if instrument_type == "equity" else _index_bars
+    loader = (
+        _intraday_bars
+        if intraday
+        else (_equity_bars if instrument_type == "equity" else _index_bars)
+    )
     errors: list[Exception] = []
+    empty_result: dict[str, Any] | None = None
     for source in SOURCE_ORDER[key]:
         try:
             data = loader(akshare, source_request, source)
@@ -167,9 +250,14 @@ def _market_data(
                 )[-2:]
                 if not data:
                     raise ValueError(f"{source} returned no recent quote data")
+            if intraday and not data:
+                empty_result = empty_result or {"data": [], "source": source}
+                continue
             return {"data": data, "source": source}
         except Exception as error:
             errors.append(error)
+    if empty_result is not None:
+        return empty_result
     raise SourcesExhausted(errors)
 
 

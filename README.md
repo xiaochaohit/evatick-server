@@ -73,6 +73,13 @@ See [server/README.md](./server/README.md) for configuration and the provider
 plugin contract. The HTTP source of truth is
 [contracts/openapi/market-api-v1.yaml](./contracts/openapi/market-api-v1.yaml).
 
+Minute bars are available for stocks and indices:
+
+```shell
+market-cli stock bars --symbol 000001 --interval 5m --start 2026-08-14 --end 2026-08-14
+market-cli index bars --symbol 000300 --interval 15m --start 2026-08-14 --end 2026-08-14
+```
+
 ## Development
 
 ```shell

@@ -23,6 +23,7 @@ export type AkshareRequest =
       operation: 'bars'
       instrumentType: 'equity' | 'index'
       providerSymbol: string
+      interval: '1m' | '5m' | '15m' | '30m' | '60m' | '1d'
       start?: string
       end?: string
       adjustment: 'none' | 'forward' | 'backward'
@@ -66,6 +67,22 @@ function pick(record: JsonRecord, ...keys: string[]): unknown {
     if (record[key] !== undefined) return record[key]
   }
   return undefined
+}
+
+const INTRADAY_MINUTES = new Map([
+  ['1m', 1], ['5m', 5], ['15m', 15], ['30m', 30], ['60m', 60],
+] as const)
+
+function shanghaiDateTime(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/.test(value)) {
+    return `${value.replace(' ', 'T')}+08:00`
+  }
+  return value
+}
+
+function subtractMinutes(value: string, minutes: number): string {
+  const shifted = new Date(new Date(value).getTime() - minutes * 60_000 + 8 * 3_600_000)
+  return `${shifted.toISOString().slice(0, 19)}+08:00`
 }
 
 function stockVenue(symbol: string): 'XSHG' | 'XSHE' | 'XBSE' {
@@ -194,8 +211,8 @@ export class AkshareProvider implements InstrumentProvider {
   }
 
   async getBars(call: BarsCall): Promise<readonly ProviderBar[]> {
-    if (call.interval !== '1d') {
-      throw new ProviderError('UNSUPPORTED_INTERVAL', 'AKShare provider currently supports daily bars', false)
+    if (call.interval === '1w' || call.interval === '1mo') {
+      throw new ProviderError('UNSUPPORTED_INTERVAL', 'AKShare provider supports minute and daily bars', false)
     }
     const instrumentType = call.providerSymbol.startsWith('csi') ||
       call.providerSymbol.startsWith('sh000') || call.providerSymbol.startsWith('sz399')
@@ -205,25 +222,37 @@ export class AkshareProvider implements InstrumentProvider {
       operation: 'bars',
       instrumentType,
       providerSymbol: call.providerSymbol,
+      interval: call.interval,
       start: call.start,
       end: call.end,
       adjustment: call.adjustment,
     }, call.signal)
     return result.data.flatMap((record): ProviderBar[] => {
-      const date = asText(pick(record, 'date', '日期'))
+      const timestamp = asText(pick(record, 'day', '时间', 'datetime'))
+      const date = asText(pick(record, 'date', '日期')) ?? timestamp?.slice(0, 10)
       const open = asText(pick(record, 'open', '开盘'))
       const high = asText(pick(record, 'high', '最高'))
       const low = asText(pick(record, 'low', '最低'))
       const close = asText(pick(record, 'close', '收盘'))
       if (!date || !open || !high || !low || !close) return []
+      const minutes = INTRADAY_MINUTES.get(
+        call.interval as '1m' | '5m' | '15m' | '30m' | '60m',
+      )
+      const periodEnd = timestamp
+        ? shanghaiDateTime(timestamp)
+        : `${date}T23:59:59+08:00`
+      const periodStart = minutes
+        ? subtractMinutes(periodEnd, minutes)
+        : `${date}T00:00:00+08:00`
       return [{
         source: result.source,
-        interval: '1d', tradingDate: date,
-        periodStart: `${date}T00:00:00+08:00`, periodEnd: `${date}T23:59:59+08:00`,
+        interval: call.interval, tradingDate: date,
+        periodStart, periodEnd,
         currency: 'CNY', open, high, low, close,
         volume: asNumber(pick(record, 'volume', '成交量')),
         turnover: asText(pick(record, 'amount', '成交额')) ?? null,
-        adjustment: call.adjustment, complete: true,
+        adjustment: call.adjustment,
+        complete: minutes ? new Date(periodEnd).getTime() <= Date.now() : true,
       }]
     })
   }

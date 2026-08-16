@@ -33,6 +33,11 @@ process and the lightweight CLI installation.
 The adapter currently derives quotes from the latest daily bars, so v1 quotes
 are end-of-day observations rather than a real-time feed.
 
+Bars support `1m`, `5m`, `15m`, `30m`, `60m`, and `1d`. Minute bars use
+Asia/Shanghai timestamps, treat the upstream timestamp as the end of the bar,
+and expose whether that period is complete. Available minute history is limited
+by the selected upstream source.
+
 ## Run
 
 ```shell

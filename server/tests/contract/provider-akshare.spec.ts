@@ -62,6 +62,34 @@ describe('AKShare provider contract', () => {
     ])
   })
 
+  it('normalizes intraday bars with Shanghai periods and the selected source', async () => {
+    const runner: AkshareRunner = async (request) => {
+      expect(request).toMatchObject({
+        operation: 'bars', instrumentType: 'equity', providerSymbol: 'sz000001',
+        interval: '5m', start: '2026-08-14', end: '2026-08-14',
+      })
+      return {
+        source: 'sina',
+        data: [{
+          day: '2026-08-14 09:35:00', open: '11.20', high: '11.23',
+          low: '11.18', close: '11.22', volume: '12000', amount: '134640',
+        }],
+      }
+    }
+    const provider = new AkshareProvider({ runner })
+
+    await expect(provider.getBars!({
+      providerSymbol: 'sz000001', signal: new AbortController().signal,
+      interval: '5m', adjustment: 'none', start: '2026-08-14', end: '2026-08-14',
+    })).resolves.toEqual([{
+      source: 'sina', interval: '5m', tradingDate: '2026-08-14',
+      periodStart: '2026-08-14T09:30:00+08:00',
+      periodEnd: '2026-08-14T09:35:00+08:00', currency: 'CNY',
+      open: '11.20', high: '11.23', low: '11.18', close: '11.22',
+      volume: 12000, turnover: '134640', adjustment: 'none', complete: true,
+    }])
+  })
+
   it('uses the dedicated quote request and preserves its actual source', async () => {
     const runner: AkshareRunner = async (request) => {
       expect(request).toMatchObject({

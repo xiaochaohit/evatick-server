@@ -123,7 +123,8 @@ def test_stock_commands_resolve_then_query_normalized_data() -> None:
         quote = run_cli("--server-url", url, "stock", "quotes", "--symbol", "000001")
         bars = run_cli(
             "--server-url", url, "stock", "bars", "--symbol", "000001",
-            "--start", "2026-08-01", "--end", "2026-08-15", "--limit", "1",
+            "--interval", "5m", "--start", "2026-08-01", "--end", "2026-08-15",
+            "--limit", "1",
         )
 
     assert json.loads(quote.stdout) == {"last": "11.11"}
@@ -131,7 +132,7 @@ def test_stock_commands_resolve_then_query_normalized_data() -> None:
     assert ("POST", "/v1/instrument-resolve", {
         "query": "000001", "context": {"instrument_type": "equity", "capability": "bars"},
     }) in _MarketHandler.requests
-    assert ("GET", "/v1/instruments/cn%3Aequity%3AXSHE%3A000001/bars?interval=1d&start=2026-08-01&end=2026-08-15&adjustment=none", None) in _MarketHandler.requests
+    assert ("GET", "/v1/instruments/cn%3Aequity%3AXSHE%3A000001/bars?interval=5m&start=2026-08-01&end=2026-08-15&adjustment=none", None) in _MarketHandler.requests
 
 
 def test_index_constituents_and_file_export_use_shared_options(tmp_path: Path) -> None:
