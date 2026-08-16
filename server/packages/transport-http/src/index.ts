@@ -190,6 +190,7 @@ export class MarketHttpService extends Service {
         provider: string
         fetched_at: string
         stale?: boolean
+        upstream?: string
       }[],
       partial = false,
       warnings: readonly string[] = [],
@@ -483,7 +484,11 @@ export class MarketHttpService extends Service {
             turnover: quote.turnover,
           },
           meta: meta([
-            { provider: result.provider, fetched_at: result.observedAt },
+            {
+              provider: result.provider,
+              fetched_at: result.observedAt,
+              ...(quote.source ? { upstream: quote.source } : {}),
+            },
           ]),
         }
       } catch (error) {
@@ -559,7 +564,11 @@ export class MarketHttpService extends Service {
             })),
           page: { next_cursor: null },
           meta: meta([
-            { provider: result.provider, fetched_at: result.observedAt },
+            {
+              provider: result.provider,
+              fetched_at: result.observedAt,
+              ...(result.value[0]?.source ? { upstream: result.value[0].source } : {}),
+            },
           ]),
         }
       } catch (error) {

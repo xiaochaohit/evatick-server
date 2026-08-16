@@ -368,6 +368,9 @@ components:
       properties:
         provider:
           type: string
+        upstream:
+          type: string
+          description: Actual upstream source selected inside the provider.
         fetched_at:
           type: string
           format: date-time

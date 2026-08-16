@@ -65,6 +65,7 @@ describe('provider routing over HTTP', () => {
       },
       async getQuote() {
         return {
+          source: 'sina',
           marketTime: '2026-08-16T10:29:57+08:00',
           currency: 'CNY',
           marketStatus: 'trading',
@@ -80,6 +81,7 @@ describe('provider routing over HTTP', () => {
       async getBars() {
         return [
           {
+            source: 'tencent',
             interval: '1d',
             tradingDate: '2026-08-15',
             periodStart: '2026-08-15T09:30:00+08:00',
@@ -127,7 +129,7 @@ describe('provider routing over HTTP', () => {
           last: '10.230',
           volume: 18_345_200,
         },
-        meta: { sources: [{ provider: 'fallback-live' }] },
+        meta: { sources: [{ provider: 'fallback-live', upstream: 'sina' }] },
       })
 
       const barsResponse = await fetch(
@@ -144,6 +146,7 @@ describe('provider routing over HTTP', () => {
             close: '10.200',
           },
         ],
+        meta: { sources: [{ provider: 'fallback-live', upstream: 'tencent' }] },
       })
 
       const constituentsResponse = await fetch(

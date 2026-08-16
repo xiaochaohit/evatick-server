@@ -8,17 +8,17 @@ describe('AKShare provider contract', () => {
     const runner: AkshareRunner = async (request, signal) => {
       signals.push(signal)
       if (request.operation === 'list_stocks') {
-        return [
+        return { source: 'akshare', data: [
           { code: '600000', name: '浦发银行' },
           { code: '000001', name: '平安银行' },
           { code: '430047', name: '诺思兰德' },
-        ]
+        ] }
       }
-      return [
+      return { source: 'akshare', data: [
         { index_code: '000001', display_name: '上证指数' },
         { index_code: '000300', display_name: '沪深300' },
         { index_code: '399001', display_name: '深证成指' },
-      ]
+      ] }
     }
     const provider = new AkshareProvider({ runner })
     const signal = new AbortController().signal
@@ -37,9 +37,9 @@ describe('AKShare provider contract', () => {
   it('normalizes daily bars and index constituents', async () => {
     const runner: AkshareRunner = async (request) => {
       if (request.operation === 'bars') {
-        return [{ date: '2026-08-14', open: 10, high: 11, low: 9, close: 10.5, volume: 123, amount: 456 }]
+        return { source: 'sina', data: [{ date: '2026-08-14', open: 10, high: 11, low: 9, close: 10.5, volume: 123, amount: 456 }] }
       }
-      return [{ 品种代码: '600000', 品种名称: '浦发银行', 权重: 2.5 }]
+      return { source: 'akshare', data: [{ 品种代码: '600000', 品种名称: '浦发银行', 权重: 2.5 }] }
     }
     const provider = new AkshareProvider({ runner })
     const signal = new AbortController().signal
@@ -50,6 +50,7 @@ describe('AKShare provider contract', () => {
       expect.objectContaining({
         tradingDate: '2026-08-14', open: '10', close: '10.5', volume: 123,
         turnover: '456', interval: '1d', adjustment: 'none', complete: true,
+        source: 'sina',
       }),
     ])
     await expect(provider.getConstituents!({
@@ -60,5 +61,26 @@ describe('AKShare provider contract', () => {
       }),
     ])
   })
-})
 
+  it('uses the dedicated quote request and preserves its actual source', async () => {
+    const runner: AkshareRunner = async (request) => {
+      expect(request).toMatchObject({
+        operation: 'quote', instrumentType: 'equity', providerSymbol: 'sz000001',
+      })
+      return {
+        source: 'sina',
+        data: [
+          { date: '2026-08-13', close: 11.25 },
+          { date: '2026-08-14', open: 11.22, high: 11.23, low: 11.11, close: 11.11, volume: 123, amount: 456 },
+        ],
+      }
+    }
+    const provider = new AkshareProvider({ runner })
+
+    await expect(provider.getQuote!({
+      providerSymbol: 'sz000001', signal: new AbortController().signal,
+    })).resolves.toMatchObject({
+      last: '11.11', previousClose: '11.25', source: 'sina',
+    })
+  })
+})

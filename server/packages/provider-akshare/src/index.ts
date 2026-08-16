@@ -27,12 +27,22 @@ export type AkshareRequest =
       end?: string
       adjustment: 'none' | 'forward' | 'backward'
     }
+  | {
+      operation: 'quote'
+      instrumentType: 'equity' | 'index'
+      providerSymbol: string
+    }
   | { operation: 'constituents'; providerSymbol: string }
+
+export interface AkshareResult {
+  data: readonly JsonRecord[]
+  source: string
+}
 
 export type AkshareRunner = (
   request: AkshareRequest,
   signal: AbortSignal,
-) => Promise<readonly JsonRecord[]>
+) => Promise<AkshareResult>
 
 export interface AkshareProviderOptions {
   pythonExecutable?: string
@@ -111,6 +121,7 @@ function bridgeRunner(
       const payload = JSON.parse(await readFile(resultPath, 'utf8')) as {
         ok?: boolean
         data?: unknown
+        source?: unknown
         error?: { code?: string; message?: string; retryable?: boolean }
       }
       if (!payload.ok) {
@@ -123,7 +134,10 @@ function bridgeRunner(
       if (!Array.isArray(payload.data)) {
         throw new ProviderError('PROVIDER_INVALID_RESPONSE', 'AKShare bridge returned non-array data', false)
       }
-      return payload.data as JsonRecord[]
+      if (typeof payload.source !== 'string' || !payload.source) {
+        throw new ProviderError('PROVIDER_INVALID_RESPONSE', 'AKShare bridge omitted its data source', false)
+      }
+      return { data: payload.data as JsonRecord[], source: payload.source }
     } catch (error) {
       if (error instanceof ProviderError) throw error
       throw new ProviderError('PROVIDER_INVALID_RESPONSE', 'AKShare bridge returned invalid JSON', false)
@@ -147,10 +161,12 @@ export class AkshareProvider implements InstrumentProvider {
 
   async listInstruments(signal = new AbortController().signal): Promise<readonly ProviderInstrument[]> {
     if (this.instruments) return this.instruments
-    const [stocks, indices] = await Promise.all([
+    const [stockResult, indexResult] = await Promise.all([
       this.run({ operation: 'list_stocks' }, signal),
       this.run({ operation: 'list_indices' }, signal),
     ])
+    const stocks = stockResult.data
+    const indices = indexResult.data
     this.instruments = [
       ...stocks.flatMap((record): ProviderInstrument[] => {
         const symbol = asText(pick(record, 'code', '代码'))
@@ -185,7 +201,7 @@ export class AkshareProvider implements InstrumentProvider {
       call.providerSymbol.startsWith('sh000') || call.providerSymbol.startsWith('sz399')
       ? 'index'
       : 'equity'
-    const rows = await this.run({
+    const result = await this.run({
       operation: 'bars',
       instrumentType,
       providerSymbol: call.providerSymbol,
@@ -193,7 +209,7 @@ export class AkshareProvider implements InstrumentProvider {
       end: call.end,
       adjustment: call.adjustment,
     }, call.signal)
-    return rows.flatMap((record): ProviderBar[] => {
+    return result.data.flatMap((record): ProviderBar[] => {
       const date = asText(pick(record, 'date', '日期'))
       const open = asText(pick(record, 'open', '开盘'))
       const high = asText(pick(record, 'high', '最高'))
@@ -201,6 +217,7 @@ export class AkshareProvider implements InstrumentProvider {
       const close = asText(pick(record, 'close', '收盘'))
       if (!date || !open || !high || !low || !close) return []
       return [{
+        source: result.source,
         interval: '1d', tradingDate: date,
         periodStart: `${date}T00:00:00+08:00`, periodEnd: `${date}T23:59:59+08:00`,
         currency: 'CNY', open, high, low, close,
@@ -212,29 +229,40 @@ export class AkshareProvider implements InstrumentProvider {
   }
 
   async getQuote(call: { providerSymbol: string; signal: AbortSignal }): Promise<ProviderQuote> {
-    const end = new Date()
-    const start = new Date(end.getTime() - 21 * 86_400_000)
-    const bars = await this.getBars({
-      ...call, interval: '1d', adjustment: 'none',
-      start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10),
-    })
-    const latest = bars.at(-1)
+    const instrumentType = call.providerSymbol.startsWith('csi') ||
+      call.providerSymbol.startsWith('sh000') || call.providerSymbol.startsWith('sz399')
+      ? 'index'
+      : 'equity'
+    const result = await this.run({
+      operation: 'quote', instrumentType, providerSymbol: call.providerSymbol,
+    }, call.signal)
+    const records = [...result.data].sort((left, right) =>
+      String(pick(left, 'date', '日期')).localeCompare(String(pick(right, 'date', '日期'))))
+    const latest = records.at(-1)
     if (!latest) throw new ProviderError('NO_DATA', 'no recent quote data', false)
-    const previous = bars.at(-2)
+    const previous = records.at(-2)
+    const date = asText(pick(latest, 'date', '日期'))
     return {
-      marketTime: latest.periodEnd, currency: latest.currency, marketStatus: 'unknown',
-      last: latest.close, open: latest.open, high: latest.high, low: latest.low,
-      previousClose: previous?.close ?? null, volume: latest.volume, turnover: latest.turnover,
+      source: result.source,
+      marketTime: date ? `${date}T23:59:59+08:00` : null,
+      currency: 'CNY', marketStatus: 'unknown',
+      last: asText(pick(latest, 'close', '收盘')) ?? null,
+      open: asText(pick(latest, 'open', '开盘')) ?? null,
+      high: asText(pick(latest, 'high', '最高')) ?? null,
+      low: asText(pick(latest, 'low', '最低')) ?? null,
+      previousClose: previous ? asText(pick(previous, 'close', '收盘')) ?? null : null,
+      volume: asNumber(pick(latest, 'volume', '成交量')),
+      turnover: asText(pick(latest, 'amount', '成交额')) ?? null,
     }
   }
 
   async getConstituents(call: ConstituentsCall): Promise<readonly ProviderConstituent[]> {
-    const rows = await this.run({
+    const result = await this.run({
       operation: 'constituents',
       providerSymbol: call.providerSymbol,
     }, call.signal)
     const asOfDate = call.asOf ?? new Date().toISOString().slice(0, 10)
-    return rows.flatMap((record, index): ProviderConstituent[] => {
+    return result.data.flatMap((record, index): ProviderConstituent[] => {
       const code = asText(pick(record, '品种代码', '成分券代码', '成分股代码', 'code', 'symbol'))
       if (!code) return []
       const rawWeight = asNumber(pick(record, '权重', '权重(%)', 'weight'))

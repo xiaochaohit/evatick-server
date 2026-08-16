@@ -22,6 +22,7 @@ export interface ProviderCall {
 }
 
 export interface ProviderQuote {
+  source?: string
   marketTime?: string | null
   currency: string
   marketStatus: 'trading' | 'closed' | 'halted' | 'auction' | 'unknown'
@@ -35,6 +36,7 @@ export interface ProviderQuote {
 }
 
 export interface ProviderBar {
+  source?: string
   interval: BarInterval
   tradingDate: string
   periodStart: string

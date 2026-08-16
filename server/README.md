@@ -43,6 +43,14 @@ pnpm install --frozen-lockfile
 pnpm start
 ```
 
+### Data source priority
+
+The AKShare bridge keeps an ordered source list for each market-data type in
+`providers/akshare-python/market_server_akshare/sources.py`. It uses the first
+working source and falls through the list on failure. Equity and index bars and
+quotes can therefore use different priorities. Successful quote and bars HTTP
+responses expose the selected source as `meta.sources[].upstream`.
+
 Configuration uses environment variables:
 
 | Variable | Default | Meaning |
