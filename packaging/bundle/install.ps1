@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0) {
 
 New-Item -ItemType Directory -Force -Path $InstallRoot, $BinDir, "$CodexHome\skills" | Out-Null
 & $Python -m venv "$InstallRoot\venv"
-& "$InstallRoot\venv\Scripts\python.exe" -m pip install --upgrade "$($Wheel.FullName)[parquet]"
+& "$InstallRoot\venv\Scripts\python.exe" -m pip install --upgrade $Wheel.FullName
 
 $Launcher = "@echo off`r`n`"$InstallRoot\venv\Scripts\market-cli.exe`" %*`r`n"
 Set-Content -Path "$BinDir\market-cli.cmd" -Value $Launcher -Encoding Ascii
@@ -33,6 +33,6 @@ if (Test-Path $SkillTarget) {
 }
 Copy-Item -Recurse "$BundleDir\skills\market-cli" $SkillTarget
 
-& "$InstallRoot\venv\Scripts\market-cli.exe" doctor
+& "$InstallRoot\venv\Scripts\market-cli.exe" version
 Write-Host "Market CLI installed: $BinDir\market-cli.cmd"
 Write-Host "Codex skill installed: $SkillTarget"

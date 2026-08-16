@@ -1,8 +1,10 @@
+import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import { MarketCliProvider } from '@market-cli/provider-market-cli'
+import { AkshareProvider } from '@market-cli/provider-akshare'
 
 import { createMarketServer } from './index.js'
 
@@ -39,8 +41,15 @@ export async function startDefaultMarketServer() {
     retryAttempts: integerFromEnvironment('MARKET_SERVER_RETRY_ATTEMPTS', 2),
     requestTimeoutMs: integerFromEnvironment('MARKET_SERVER_REQUEST_TIMEOUT_MS', 30_000),
   })
-  await server.mountProvider(new MarketCliProvider({
-    executable: process.env.MARKET_SERVER_MARKET_CLI ?? 'market-cli',
+  const providerPython = fileURLToPath(new URL(
+    process.platform === 'win32'
+      ? '../../../providers/akshare-python/.venv/Scripts/python.exe'
+      : '../../../providers/akshare-python/.venv/bin/python',
+    import.meta.url,
+  ))
+  await server.mountProvider(new AkshareProvider({
+    pythonExecutable: process.env.MARKET_SERVER_AKSHARE_PYTHON ??
+      (existsSync(providerPython) ? providerPython : 'python3'),
   }))
   return server
 }

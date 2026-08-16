@@ -4,16 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market-cli"
-version = "0.2.0"
-description = "Model-oriented CLI for discoverable market data"
+version = "0.3.0"
+description = "Lightweight HTTP client for Market Server v1"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 dependencies = [
-    "akshare==1.18.82",
     "click>=8.1,<9",
-    "platformdirs>=4,<5",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +26,3 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["market_cli*"]
-
-[tool.setuptools.package-data]
-market_cli = ["data/*.json"]

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { MarketCliProvider, type MarketCliRunner } from '@market-cli/provider-market-cli'
+import { AkshareProvider, type AkshareRunner } from '@market-cli/provider-akshare'
 
-describe('market-cli provider contract', () => {
+describe('AKShare provider contract', () => {
   it('normalizes A-share and index instruments without leaking AKShare fields', async () => {
     const signals: AbortSignal[] = []
-    const runner: MarketCliRunner = async (args, signal) => {
+    const runner: AkshareRunner = async (request, signal) => {
       signals.push(signal)
-      if (args[0] === 'stock') {
+      if (request.operation === 'list_stocks') {
         return [
           { code: '600000', name: '浦发银行' },
           { code: '000001', name: '平安银行' },
@@ -20,7 +20,7 @@ describe('market-cli provider contract', () => {
         { index_code: '399001', display_name: '深证成指' },
       ]
     }
-    const provider = new MarketCliProvider({ runner })
+    const provider = new AkshareProvider({ runner })
     const signal = new AbortController().signal
 
     await expect(provider.listInstruments(signal)).resolves.toEqual([
@@ -35,13 +35,13 @@ describe('market-cli provider contract', () => {
   })
 
   it('normalizes daily bars and index constituents', async () => {
-    const runner: MarketCliRunner = async (args) => {
-      if (args[1] === 'bars') {
+    const runner: AkshareRunner = async (request) => {
+      if (request.operation === 'bars') {
         return [{ date: '2026-08-14', open: 10, high: 11, low: 9, close: 10.5, volume: 123, amount: 456 }]
       }
       return [{ 品种代码: '600000', 品种名称: '浦发银行', 权重: 2.5 }]
     }
-    const provider = new MarketCliProvider({ runner })
+    const provider = new AkshareProvider({ runner })
     const signal = new AbortController().signal
 
     await expect(provider.getBars!({
@@ -61,3 +61,4 @@ describe('market-cli provider contract', () => {
     ])
   })
 })
+

@@ -1,1 +1,0 @@
-"""Packaged static registry data."""

@@ -11,9 +11,9 @@ importers:
       '@apidevtools/swagger-parser':
         specifier: 12.1.0
         version: 12.1.0(openapi-types@12.1.3)
-      '@market-cli/provider-market-cli':
+      '@market-cli/provider-akshare':
         specifier: workspace:*
-        version: link:packages/provider-market-cli
+        version: link:packages/provider-akshare
       '@market-cli/server':
         specifier: workspace:*
         version: link:apps/market-server
@@ -44,9 +44,9 @@ importers:
       '@market-cli/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@market-cli/provider-market-cli':
+      '@market-cli/provider-akshare':
         specifier: workspace:*
-        version: link:../../packages/provider-market-cli
+        version: link:../../packages/provider-akshare
       '@market-cli/transport-http':
         specifier: workspace:*
         version: link:../../packages/transport-http
@@ -68,7 +68,7 @@ importers:
 
   packages/core: {}
 
-  packages/provider-market-cli:
+  packages/provider-akshare:
     dependencies:
       '@market-cli/core':
         specifier: workspace:*

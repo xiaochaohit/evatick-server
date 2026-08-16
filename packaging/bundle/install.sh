@@ -22,7 +22,7 @@ fi
 
 mkdir -p "$install_root" "$bin_dir" "$skills_root"
 "$python_command" -m venv "$install_root/venv"
-"$install_root/venv/bin/python" -m pip install --upgrade "$wheel[parquet]"
+"$install_root/venv/bin/python" -m pip install --upgrade "$wheel"
 ln -sfn "$install_root/venv/bin/market-cli" "$bin_dir/market-cli"
 
 if [ -e "$skill_target" ]; then
@@ -32,6 +32,6 @@ if [ -e "$skill_target" ]; then
 fi
 cp -R "$bundle_dir/skills/market-cli" "$skill_target"
 
-"$install_root/venv/bin/market-cli" doctor
+"$install_root/venv/bin/market-cli" version
 echo "Market CLI installed: $bin_dir/market-cli"
 echo "Codex skill installed: $skill_target"

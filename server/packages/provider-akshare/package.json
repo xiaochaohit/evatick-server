@@ -1,5 +1,5 @@
 {
-  "name": "@market-cli/provider-market-cli",
+  "name": "@market-cli/provider-akshare",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",

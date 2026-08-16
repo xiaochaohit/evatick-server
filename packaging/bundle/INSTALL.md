@@ -5,7 +5,7 @@ This bundle installs the included Market CLI release and its matching Codex `mar
 ## Requirements
 
 - CPython 3.11–3.14, 64-bit
-- Internet access during installation for AKShare and other Python dependencies
+- Internet access during installation for the lightweight CLI dependencies
 - Codex, if you want to use the bundled skill
 
 ## macOS or Linux
@@ -21,7 +21,7 @@ The installer creates an isolated environment under `~/.local/share/market-cli`,
 Ensure `~/.local/bin` is in `PATH`, then verify:
 
 ```shell
-market-cli doctor
+market-cli version
 market-cli --help
 ```
 
@@ -36,7 +36,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 The installer creates an isolated environment under `%LOCALAPPDATA%\market-cli`, creates `%LOCALAPPDATA%\market-cli\bin\market-cli.cmd`, and installs the skill under `%CODEX_HOME%\skills\market-cli` or `%USERPROFILE%\.codex\skills\market-cli`.
 
-Add `%LOCALAPPDATA%\market-cli\bin` to `PATH`, then run `market-cli doctor`.
+Add `%LOCALAPPDATA%\market-cli\bin` to `PATH`, then run `market-cli version`.
 
 ## Existing skill
 

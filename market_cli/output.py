@@ -62,10 +62,6 @@ def _atomic_write(target: Path, content: str, overwrite: bool) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def write_debug_output(output: Path, diagnostic: str, overwrite: bool) -> None:
-    _atomic_write(output.absolute(), diagnostic.rstrip() + "\n", overwrite)
-
-
 def _publish_temporary(temporary: Path, target: Path, overwrite: bool) -> None:
     if overwrite:
         os.replace(temporary, target)

@@ -27,14 +27,17 @@ identifiers, and capabilities; routing retries transient failures and can fall
 back to another provider that declares the same canonical instrument and
 capability.
 
-The bundled `market-cli-akshare` plugin is a process-isolated adapter around the
-installed Python CLI. That keeps AKShare and pandas outside the Node process.
+The bundled `akshare` plugin uses its own process-isolated Python environment.
+It does not call Market CLI. This keeps AKShare and pandas outside both the Node
+process and the lightweight CLI installation.
 The adapter currently derives quotes from the latest daily bars, so v1 quotes
 are end-of-day observations rather than a real-time feed.
 
 ## Run
 
 ```shell
+python3 -m venv providers/akshare-python/.venv
+providers/akshare-python/.venv/bin/python -m pip install ./providers/akshare-python
 corepack enable
 pnpm install --frozen-lockfile
 pnpm start
@@ -47,7 +50,7 @@ Configuration uses environment variables:
 | `MARKET_SERVER_HOST` | `127.0.0.1` | Listen host |
 | `MARKET_SERVER_PORT` | `8765` | Listen port; use `0` for an ephemeral port |
 | `MARKET_SERVER_CATALOG_PATH` | user data directory | SQLite catalog snapshot |
-| `MARKET_SERVER_MARKET_CLI` | `market-cli` | Python CLI executable |
+| `MARKET_SERVER_AKSHARE_PYTHON` | bundled provider venv, then `python3` | Python with `market-server-akshare` installed |
 | `MARKET_SERVER_RETRY_ATTEMPTS` | `2` | Attempts per provider |
 | `MARKET_SERVER_REQUEST_TIMEOUT_MS` | `30000` | Per-provider deadline |
 

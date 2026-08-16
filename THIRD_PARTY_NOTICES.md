@@ -1,6 +1,6 @@
 # Third-party notices
 
-Market CLI depends on [AKShare](https://github.com/akfamily/akshare), which is distributed under the MIT License.
+The bundled Market Server AKShare provider depends on [AKShare](https://github.com/akfamily/akshare), which is distributed under the MIT License. The standalone Market CLI package does not depend on AKShare.
 
 Copyright (c) 2019–2026 Albert King
 

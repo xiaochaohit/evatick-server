@@ -43,7 +43,7 @@ def test_version_reports_only_cli_and_server_contract_versions() -> None:
     assert result.returncode == 0
     assert result.stderr == ""
     assert json.loads(result.stdout) == {
-        "market_cli": "0.2.0",
+        "market_cli": "0.3.0",
         "market_server_api": "v1",
         "python": platform.python_version(),
     }
