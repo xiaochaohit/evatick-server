@@ -32,6 +32,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: 4.0.1
         version: 4.0.1
+      '@market-cli/catalog-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/catalog-sqlite
       '@market-cli/cordis-runtime':
         specifier: workspace:*
         version: link:../../packages/cordis-runtime
@@ -41,6 +44,12 @@ importers:
       '@market-cli/transport-http':
         specifier: workspace:*
         version: link:../../packages/transport-http
+
+  packages/catalog-sqlite:
+    dependencies:
+      '@market-cli/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/cordis-runtime:
     dependencies:

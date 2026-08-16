@@ -337,6 +337,9 @@ components:
         fetched_at:
           type: string
           format: date-time
+        stale:
+          type: boolean
+          default: false
     ResponseMeta:
       type: object
       additionalProperties: false

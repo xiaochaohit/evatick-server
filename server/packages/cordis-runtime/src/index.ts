@@ -1,10 +1,14 @@
 import { Service, type Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
 
-import type { InstrumentProvider } from '@market-cli/core'
+import type {
+  CatalogSnapshotStore,
+  InstrumentProvider,
+} from '@market-cli/core'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     marketProviderRegistry: MarketProviderRegistry
+    marketCatalogStore: MarketCatalogStore
   }
 }
 
@@ -29,6 +33,24 @@ export class MarketProviderRegistry extends Service {
 
   list(): readonly InstrumentProvider[] {
     return [...this.providers.values()]
+  }
+}
+
+export class MarketCatalogStore extends Service {
+  constructor(
+    ctx: Context,
+    private readonly store: CatalogSnapshotStore,
+  ) {
+    super(ctx, 'marketCatalogStore')
+    ctx.effect(() => () => this.store.close?.())
+  }
+
+  readProvider(provider: string) {
+    return this.store.readProvider(provider)
+  }
+
+  writeProvider(snapshot: Parameters<CatalogSnapshotStore['writeProvider']>[0]) {
+    return this.store.writeProvider(snapshot)
   }
 }
 

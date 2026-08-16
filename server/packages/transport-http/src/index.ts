@@ -17,12 +17,16 @@ import {
   routeInstrumentData,
   searchInstrumentCatalog,
 } from '@market-cli/core'
-import type { MarketProviderRegistry } from '@market-cli/cordis-runtime'
+import type {
+  MarketCatalogStore,
+  MarketProviderRegistry,
+} from '@market-cli/cordis-runtime'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     marketHttp: MarketHttpService
     marketProviderRegistry: MarketProviderRegistry
+    marketCatalogStore: MarketCatalogStore
   }
 }
 
@@ -57,7 +61,7 @@ function toInstrumentRecord(instrument: CatalogInstrument): InstrumentRecord {
 }
 
 export class MarketHttpService extends Service {
-  static inject = ['marketProviderRegistry']
+  static inject = ['marketProviderRegistry', 'marketCatalogStore']
 
   private readonly app: FastifyInstance
   private address: string | undefined
@@ -79,7 +83,6 @@ export class MarketHttpService extends Service {
 
     const loadCatalog = async () => {
       const providers = ctx.marketProviderRegistry.list()
-      const fetchedAt = new Date().toISOString()
       const results = await Promise.all(
         providers.map(async (provider) => {
           try {
@@ -87,10 +90,18 @@ export class MarketHttpService extends Service {
               ...routingOptions,
               invoke: () => provider.listInstruments(),
             })
+            const fetchedAt = new Date().toISOString()
+            await ctx.marketCatalogStore.writeProvider({
+              provider: provider.id,
+              instruments: result.value,
+              fetchedAt,
+            })
             return {
               ok: true as const,
               provider: provider.id,
               instruments: result.value,
+              fetchedAt,
+              stale: false,
             }
           } catch (error) {
             const normalized =
@@ -101,32 +112,51 @@ export class MarketHttpService extends Service {
                     'provider catalog request failed',
                     true,
                   )
-            return {
-              ok: false as const,
-              provider: provider.id,
-              error: normalized,
+            const stale = await ctx.marketCatalogStore.readProvider(provider.id)
+            if (stale) {
+              return {
+                ok: true as const,
+                provider: provider.id,
+                instruments: stale.instruments,
+                fetchedAt: stale.fetchedAt,
+                stale: true,
+                error: normalized,
+              }
             }
+            return { ok: false as const, provider: provider.id, error: normalized }
           }
         }),
       )
       const groups = results.filter((result) => result.ok)
       const failures = results.filter((result) => !result.ok)
+      const staleGroups = groups.filter((result) => result.stale)
       return {
         instruments: buildInstrumentCatalog(groups),
         sources: groups.map((group) => ({
           provider: group.provider,
-          fetched_at: fetchedAt,
+          fetched_at: group.fetchedAt,
+          ...(group.stale ? { stale: true } : {}),
         })),
-        partial: failures.length > 0,
-        warnings: failures.map(
-          (failure) =>
-            `provider ${failure.provider} failed: ${failure.error.code}`,
-        ),
+        partial: failures.length > 0 || staleGroups.length > 0,
+        warnings: [
+          ...failures.map(
+            (failure) =>
+              `provider ${failure.provider} failed: ${failure.error.code}`,
+          ),
+          ...staleGroups.map(
+            (group) =>
+              `provider ${group.provider} failed: ${group.error?.code}; using stale catalog`,
+          ),
+        ],
       }
     }
 
     const meta = (
-      sources: readonly { provider: string; fetched_at: string }[],
+      sources: readonly {
+        provider: string
+        fetched_at: string
+        stale?: boolean
+      }[],
       partial = false,
       warnings: readonly string[] = [],
     ) => ({

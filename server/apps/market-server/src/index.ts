@@ -1,7 +1,12 @@
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 
-import type { InstrumentProvider } from '@market-cli/core'
+import { SqliteCatalogSnapshotStore } from '@market-cli/catalog-sqlite'
 import {
+  MemoryCatalogSnapshotStore,
+  type InstrumentProvider,
+} from '@market-cli/core'
+import {
+  MarketCatalogStore,
   MarketProviderRegistry,
   mountInstrumentProvider,
   type MountedProvider,
@@ -17,6 +22,7 @@ export interface MarketServer {
 export interface MarketServerOptions {
   retryAttempts?: number
   requestTimeoutMs?: number
+  catalogPath?: string
 }
 
 export async function createMarketServer(
@@ -25,6 +31,11 @@ export async function createMarketServer(
   const ctx = new Context()
   const registryFiber: Fiber = ctx.plugin(MarketProviderRegistry)
   await registryFiber.await()
+  const catalogStore = options.catalogPath
+    ? new SqliteCatalogSnapshotStore(options.catalogPath)
+    : new MemoryCatalogSnapshotStore()
+  const storeFiber: Fiber = ctx.plugin(MarketCatalogStore, catalogStore)
+  await storeFiber.await()
   const httpFiber: Fiber = ctx.plugin(MarketHttpService, options)
   await httpFiber.await()
   const url = await ctx.marketHttp.listen()
@@ -36,6 +47,7 @@ export async function createMarketServer(
     },
     async close() {
       await httpFiber.dispose()
+      await storeFiber.dispose()
       await registryFiber.dispose()
     },
   }

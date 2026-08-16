@@ -94,6 +94,30 @@ export interface InstrumentProvider {
   ): Promise<readonly ProviderConstituent[]>
 }
 
+export interface StoredProviderCatalog {
+  provider: string
+  instruments: readonly ProviderInstrument[]
+  fetchedAt: string
+}
+
+export interface CatalogSnapshotStore {
+  readProvider(provider: string): Promise<StoredProviderCatalog | undefined>
+  writeProvider(snapshot: StoredProviderCatalog): Promise<void>
+  close?(): Promise<void> | void
+}
+
+export class MemoryCatalogSnapshotStore implements CatalogSnapshotStore {
+  private readonly snapshots = new Map<string, StoredProviderCatalog>()
+
+  async readProvider(provider: string): Promise<StoredProviderCatalog | undefined> {
+    return this.snapshots.get(provider)
+  }
+
+  async writeProvider(snapshot: StoredProviderCatalog): Promise<void> {
+    this.snapshots.set(snapshot.provider, snapshot)
+  }
+}
+
 export interface ProviderIdentifier {
   provider: string
   value: string
