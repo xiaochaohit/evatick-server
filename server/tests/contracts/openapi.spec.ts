@@ -15,8 +15,20 @@ describe('public HTTP contract', () => {
     expect(Reflect.get(contract, 'openapi')).toBe('3.1.0')
     const paths = Reflect.get(contract, 'paths') as Record<
       string,
-      { get?: { operationId?: string } }
+      {
+        get?: { operationId?: string }
+        post?: { operationId?: string }
+      }
     >
     expect(paths['/v1/instruments']?.get?.operationId).toBe('listInstruments')
+    expect(paths['/v1/instruments/{instrument_id}']?.get?.operationId).toBe(
+      'getInstrument',
+    )
+    expect(paths['/v1/instrument-search']?.get?.operationId).toBe(
+      'searchInstruments',
+    )
+    expect(paths['/v1/instrument-resolve']?.post?.operationId).toBe(
+      'resolveInstrument',
+    )
   })
 })

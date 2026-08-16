@@ -8,6 +8,13 @@ paths:
     get:
       operationId: listInstruments
       summary: List supported financial instruments
+      parameters:
+        - $ref: '#/components/parameters/InstrumentType'
+        - $ref: '#/components/parameters/Venue'
+        - $ref: '#/components/parameters/Publisher'
+        - $ref: '#/components/parameters/Capability'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Supported instruments from active providers.
@@ -21,26 +28,144 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/instruments/{instrument_id}:
+    get:
+      operationId: getInstrument
+      summary: Get one canonical financial instrument
+      parameters:
+        - name: instrument_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Canonical instrument and provider identifiers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentDetailResponse'
+        default:
+          description: Request failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/instrument-search:
+    get:
+      operationId: searchInstruments
+      summary: Search the canonical instrument catalog
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - $ref: '#/components/parameters/InstrumentType'
+        - $ref: '#/components/parameters/Venue'
+        - $ref: '#/components/parameters/Publisher'
+        - $ref: '#/components/parameters/Capability'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Ranked catalog candidates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentSearchResponse'
+        default:
+          description: Request failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/instrument-resolve:
+    post:
+      operationId: resolveInstrument
+      summary: Resolve user input to a canonical instrument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstrumentResolutionRequest'
+      responses:
+        '200':
+          description: Resolution, ambiguity, or not-found result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentResolutionResponse'
+        default:
+          description: Request failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
+  parameters:
+    InstrumentType:
+      name: instrument_type
+      in: query
+      schema:
+        type: string
+        enum: [equity, index]
+    Venue:
+      name: venue
+      in: query
+      schema:
+        type: string
+    Publisher:
+      name: publisher
+      in: query
+      schema:
+        type: string
+    Capability:
+      name: capability
+      in: query
+      schema:
+        $ref: '#/components/schemas/InstrumentCapability'
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
   schemas:
+    InstrumentCapability:
+      type: string
+      enum: [quote, bars, constituents]
     Instrument:
       type: object
       additionalProperties: false
       required:
         - instrument_id
         - instrument_type
+        - market
         - name
         - symbol
         - venue
         - publisher
         - currency
         - status
+        - aliases
+        - capabilities
       properties:
         instrument_id:
           type: string
         instrument_type:
           type: string
           enum: [equity, index]
+        market:
+          const: CN
         name:
           type: string
         symbol:
@@ -54,6 +179,51 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        aliases:
+          type: array
+          items:
+            type: string
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstrumentCapability'
+    ProviderIdentifier:
+      type: object
+      additionalProperties: false
+      required: [provider, value]
+      properties:
+        provider:
+          type: string
+        value:
+          type: string
+    InstrumentDetail:
+      allOf:
+        - $ref: '#/components/schemas/Instrument'
+        - type: object
+          required: [identifiers]
+          properties:
+            identifiers:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProviderIdentifier'
+    InstrumentSearchMatch:
+      allOf:
+        - $ref: '#/components/schemas/Instrument'
+        - type: object
+          required: [match_type, score]
+          properties:
+            match_type:
+              type: string
+              enum:
+                - exact_id
+                - exact_symbol
+                - exact_name
+                - exact_alias
+                - prefix
+                - contains
+                - fuzzy
+            score:
+              type: number
     Page:
       type: object
       additionalProperties: false
@@ -109,6 +279,79 @@ components:
             $ref: '#/components/schemas/Instrument'
         page:
           $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    InstrumentDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, meta]
+      properties:
+        schema:
+          const: market.instrument.v1
+        data:
+          $ref: '#/components/schemas/InstrumentDetail'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    InstrumentSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, page, meta]
+      properties:
+        schema:
+          const: market.instrument-search.v1
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstrumentSearchMatch'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    InstrumentResolutionContext:
+      type: object
+      additionalProperties: false
+      properties:
+        instrument_type:
+          type: string
+          enum: [equity, index]
+        venue:
+          type: string
+        publisher:
+          type: string
+        capability:
+          $ref: '#/components/schemas/InstrumentCapability'
+    InstrumentResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+        context:
+          $ref: '#/components/schemas/InstrumentResolutionContext'
+    InstrumentResolutionData:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [resolved, ambiguous, not_found]
+        instrument:
+          $ref: '#/components/schemas/InstrumentSearchMatch'
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstrumentSearchMatch'
+    InstrumentResolutionResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, meta]
+      properties:
+        schema:
+          const: market.instrument-resolution.v1
+        data:
+          $ref: '#/components/schemas/InstrumentResolutionData'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
     Problem:

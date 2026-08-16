@@ -9,22 +9,28 @@ describe('instrument provider lifecycle over HTTP', () => {
       async listInstruments() {
         return [
           {
-            instrumentId: 'ins_equity_600000',
             type: 'equity',
+            market: 'CN',
             name: '浦发银行',
             symbol: '600000',
+            providerSymbol: 'sh600000',
             venue: 'XSHG',
             currency: 'CNY',
             status: 'active',
+            aliases: ['SPDB', '浦发'],
+            capabilities: ['quote', 'bars'],
           },
           {
-            instrumentId: 'ins_index_000001',
             type: 'index',
+            market: 'CN',
             name: '上证指数',
             symbol: '000001',
+            providerSymbol: 'sh000001',
             publisher: 'SSE',
             currency: 'CNY',
             status: 'active',
+            aliases: ['上证综指'],
+            capabilities: ['quote', 'bars', 'constituents'],
           },
         ]
       },
@@ -41,22 +47,28 @@ describe('instrument provider lifecycle over HTTP', () => {
         schema: 'market.instrument-list.v1',
         data: [
           {
-            instrument_id: 'ins_equity_600000',
+            instrument_id: 'cn:equity:XSHG:600000',
             instrument_type: 'equity',
+            market: 'CN',
             name: '浦发银行',
             symbol: '600000',
             venue: 'XSHG',
             currency: 'CNY',
             status: 'active',
+            aliases: ['SPDB', '浦发'],
+            capabilities: ['bars', 'quote'],
           },
           {
-            instrument_id: 'ins_index_000001',
+            instrument_id: 'cn:index:SSE:000001',
             instrument_type: 'index',
+            market: 'CN',
             name: '上证指数',
             symbol: '000001',
             publisher: 'SSE',
             currency: 'CNY',
             status: 'active',
+            aliases: ['上证综指'],
+            capabilities: ['bars', 'constituents', 'quote'],
           },
         ],
         page: { next_cursor: null },
@@ -77,6 +89,74 @@ describe('instrument provider lifecycle over HTTP', () => {
         page: { next_cursor: null },
         meta: { partial: false, sources: [], warnings: [] },
       })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('merges the same canonical instrument across providers', async () => {
+    const primary: InstrumentProvider = {
+      id: 'primary',
+      async listInstruments() {
+        return [
+          {
+            type: 'equity',
+            market: 'CN',
+            name: '浦发银行',
+            symbol: '600000',
+            providerSymbol: 'sh600000',
+            venue: 'XSHG',
+            currency: 'CNY',
+            status: 'active',
+            aliases: ['浦发'],
+            capabilities: ['quote'],
+          },
+        ]
+      },
+    }
+    const secondary: InstrumentProvider = {
+      id: 'secondary',
+      async listInstruments() {
+        return [
+          {
+            type: 'equity',
+            market: 'CN',
+            name: '上海浦东发展银行',
+            symbol: '600000',
+            providerSymbol: '600000.SH',
+            venue: 'XSHG',
+            currency: 'CNY',
+            status: 'active',
+            aliases: ['SPDB'],
+            capabilities: ['bars'],
+          },
+        ]
+      },
+    }
+
+    const server = await createMarketServer()
+    await server.mountProvider(primary)
+    await server.mountProvider(secondary)
+
+    try {
+      const response = await fetch(`${server.url}/v1/instruments`)
+      const payload = (await response.json()) as { data: unknown[] }
+
+      expect(payload.data).toEqual([
+        {
+          instrument_id: 'cn:equity:XSHG:600000',
+          instrument_type: 'equity',
+          market: 'CN',
+          name: '浦发银行',
+          symbol: '600000',
+          venue: 'XSHG',
+          publisher: null,
+          currency: 'CNY',
+          status: 'active',
+          aliases: ['SPDB', '上海浦东发展银行', '浦发'],
+          capabilities: ['bars', 'quote'],
+        },
+      ])
     } finally {
       await server.close()
     }
