@@ -123,9 +123,8 @@ export class MarketCliProvider implements InstrumentProvider {
     this.run = options.runner ?? commandRunner(options.executable ?? 'market-cli')
   }
 
-  async listInstruments(): Promise<readonly ProviderInstrument[]> {
+  async listInstruments(signal = new AbortController().signal): Promise<readonly ProviderInstrument[]> {
     if (this.instruments) return this.instruments
-    const signal = new AbortController().signal
     const [stocks, indices] = await Promise.all([
       this.run(['stock', 'instruments'], signal),
       this.run(['index', 'instruments'], signal),

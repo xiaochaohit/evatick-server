@@ -4,7 +4,9 @@ import { MarketCliProvider, type MarketCliRunner } from '@market-cli/provider-ma
 
 describe('market-cli provider contract', () => {
   it('normalizes A-share and index instruments without leaking AKShare fields', async () => {
-    const runner: MarketCliRunner = async (args) => {
+    const signals: AbortSignal[] = []
+    const runner: MarketCliRunner = async (args, signal) => {
+      signals.push(signal)
       if (args[0] === 'stock') {
         return [
           { code: '600000', name: '浦发银行' },
@@ -19,8 +21,9 @@ describe('market-cli provider contract', () => {
       ]
     }
     const provider = new MarketCliProvider({ runner })
+    const signal = new AbortController().signal
 
-    await expect(provider.listInstruments()).resolves.toEqual([
+    await expect(provider.listInstruments(signal)).resolves.toEqual([
       expect.objectContaining({ symbol: '600000', venue: 'XSHG', providerSymbol: 'sh600000' }),
       expect.objectContaining({ symbol: '000001', venue: 'XSHE', providerSymbol: 'sz000001' }),
       expect.objectContaining({ symbol: '430047', venue: 'XBSE', providerSymbol: 'bj430047' }),
@@ -28,6 +31,7 @@ describe('market-cli provider contract', () => {
       expect.objectContaining({ symbol: '000300', publisher: 'CSI', providerSymbol: 'csi000300' }),
       expect.objectContaining({ symbol: '399001', publisher: 'SZSE', providerSymbol: 'sz399001' }),
     ])
+    expect(signals).toEqual([signal, signal])
   })
 
   it('normalizes daily bars and index constituents', async () => {

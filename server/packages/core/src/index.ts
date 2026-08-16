@@ -86,7 +86,7 @@ export interface ProviderInstrument {
 
 export interface InstrumentProvider {
   readonly id: string
-  listInstruments(): Promise<readonly ProviderInstrument[]>
+  listInstruments(signal?: AbortSignal): Promise<readonly ProviderInstrument[]>
   getQuote?(call: ProviderCall): Promise<ProviderQuote>
   getBars?(call: BarsCall): Promise<readonly ProviderBar[]>
   getConstituents?(

@@ -76,6 +76,40 @@ export class MarketHttpService extends Service {
     super(ctx, 'marketHttp')
     this.app = Fastify({ logger: false })
 
+    this.app.setNotFoundHandler((_request, reply) => reply
+      .code(404)
+      .type('application/problem+json')
+      .send({
+        type: 'https://market-cli.dev/problems/route-not-found',
+        title: 'Route not found',
+        status: 404,
+        code: 'ROUTE_NOT_FOUND',
+        detail: 'The requested HTTP route does not exist.',
+        retryable: false,
+        request_id: `req_${randomUUID()}`,
+      }))
+
+    this.app.setErrorHandler((error, _request, reply) => {
+      const normalized = error as { statusCode?: number; message?: string }
+      const status = normalized.statusCode && normalized.statusCode >= 400 && normalized.statusCode < 500
+        ? normalized.statusCode
+        : 500
+      return reply
+        .code(status)
+        .type('application/problem+json')
+        .send({
+          type: `https://market-cli.dev/problems/${status === 500 ? 'internal-error' : 'invalid-request'}`,
+          title: status === 500 ? 'Internal server error' : 'Invalid request',
+          status,
+          code: status === 500 ? 'INTERNAL_ERROR' : 'INVALID_REQUEST',
+          detail: status === 500
+            ? 'The server could not complete the request.'
+            : (normalized.message ?? 'The request is invalid.'),
+          retryable: status >= 500,
+          request_id: `req_${randomUUID()}`,
+        })
+    })
+
     const routingOptions = {
       retryAttempts: Math.max(this.config.retryAttempts ?? 2, 1),
       timeoutMs: Math.max(this.config.requestTimeoutMs ?? 10_000, 1),
@@ -88,7 +122,7 @@ export class MarketHttpService extends Service {
           try {
             const result = await retryProviderCall({
               ...routingOptions,
-              invoke: () => provider.listInstruments(),
+              invoke: (signal) => provider.listInstruments(signal),
             })
             const fetchedAt = new Date().toISOString()
             await ctx.marketCatalogStore.writeProvider({
@@ -171,7 +205,7 @@ export class MarketHttpService extends Service {
       reply: FastifyReply,
       error: ProviderRoutingError,
     ) =>
-      reply.code(error.retryable ? 503 : 422).send({
+      reply.code(error.retryable ? 503 : 422).type('application/problem+json').send({
         type: `https://market-cli.dev/problems/${error.code.toLowerCase().replaceAll('_', '-')}`,
         title: error.code === 'CAPABILITY_UNAVAILABLE'
           ? 'Capability unavailable'
@@ -242,7 +276,7 @@ export class MarketHttpService extends Service {
           (instrument) => instrument.instrumentId === cursorId,
         )
         if (cursorIndex < 0) {
-          return reply.code(400).send({
+          return reply.code(400).type('application/problem+json').send({
             type: 'https://market-cli.dev/problems/invalid-cursor',
             title: 'Invalid cursor',
             status: 400,
@@ -277,7 +311,7 @@ export class MarketHttpService extends Service {
         (candidate) => candidate.instrumentId === request.params.instrumentId,
       )
       if (!instrument) {
-        return reply.code(404).send({
+        return reply.code(404).type('application/problem+json').send({
           type: 'https://market-cli.dev/problems/instrument-not-found',
           title: 'Instrument not found',
           status: 404,
@@ -308,7 +342,7 @@ export class MarketHttpService extends Service {
       }
     }>('/v1/instrument-search', async (request, reply) => {
       if (!request.query.q?.trim()) {
-        return reply.code(400).send({
+        return reply.code(400).type('application/problem+json').send({
           type: 'https://market-cli.dev/problems/invalid-request',
           title: 'Invalid request',
           status: 400,
@@ -356,7 +390,7 @@ export class MarketHttpService extends Service {
       }
     }>('/v1/instrument-resolve', async (request, reply) => {
       if (!request.body?.query?.trim()) {
-        return reply.code(400).send({
+        return reply.code(400).type('application/problem+json').send({
           type: 'https://market-cli.dev/problems/invalid-request',
           title: 'Invalid request',
           status: 400,
@@ -407,7 +441,7 @@ export class MarketHttpService extends Service {
         (candidate) => candidate.instrumentId === request.params.instrumentId,
       )
       if (!instrument) {
-        return reply.code(404).send({
+        return reply.code(404).type('application/problem+json').send({
           type: 'https://market-cli.dev/problems/instrument-not-found',
           title: 'Instrument not found',
           status: 404,
@@ -474,7 +508,7 @@ export class MarketHttpService extends Service {
         (candidate) => candidate.instrumentId === request.params.instrumentId,
       )
       if (!instrument) {
-        return reply.code(404).send({
+        return reply.code(404).type('application/problem+json').send({
           type: 'https://market-cli.dev/problems/instrument-not-found',
           title: 'Instrument not found',
           status: 404,
@@ -547,7 +581,7 @@ export class MarketHttpService extends Service {
           (candidate) => candidate.instrumentId === request.params.instrumentId,
         )
         if (!instrument || instrument.type !== 'index') {
-          return reply.code(404).send({
+          return reply.code(404).type('application/problem+json').send({
             type: 'https://market-cli.dev/problems/instrument-not-found',
             title: 'Index not found',
             status: 404,
