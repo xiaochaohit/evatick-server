@@ -335,6 +335,8 @@ class DataCommand(click.Command):
             suffix = f" {type_label}" if type_label else ""
             required = " [required]" if parameter["required"] else ""
             formatter.write(f"    {option}{suffix}{required}\n")
+        if command["path"] == ["stock", "quotes"]:
+            formatter.write("    --symbol TEXT\n")
         formatter.write("    --limit INTEGER\n")
         formatter.write("    --output PATH\n")
         formatter.write("    --format [json|jsonl|csv|parquet]\n")

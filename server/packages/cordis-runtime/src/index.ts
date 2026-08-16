@@ -59,7 +59,13 @@ export function createInstrumentProviderPlugin(provider: InstrumentProvider): Pl
     name: `market-provider-${provider.id}`,
     inject: ['marketProviderRegistry'],
     apply(ctx: Context) {
-      ctx.effect(() => ctx.marketProviderRegistry.register(provider))
+      ctx.effect(() => {
+        const unregister = ctx.marketProviderRegistry.register(provider)
+        return async () => {
+          unregister()
+          await provider.close?.()
+        }
+      })
     },
   }
 }

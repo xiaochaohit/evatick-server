@@ -41,14 +41,27 @@ export async function createMarketServer(
   const httpFiber: Fiber = ctx.plugin(MarketHttpService, options)
   await httpFiber.await()
   const url = await ctx.marketHttp.listen(options.host, options.port)
+  const mountedProviders = new Set<MountedProvider>()
 
   return {
     url,
-    mountProvider(provider) {
-      return mountInstrumentProvider(ctx, provider)
+    async mountProvider(provider) {
+      const mounted = await mountInstrumentProvider(ctx, provider)
+      let disposed = false
+      const tracked: MountedProvider = {
+        async dispose() {
+          if (disposed) return
+          disposed = true
+          mountedProviders.delete(tracked)
+          await mounted.dispose()
+        },
+      }
+      mountedProviders.add(tracked)
+      return tracked
     },
     async close() {
       await httpFiber.dispose()
+      await Promise.all([...mountedProviders].map((provider) => provider.dispose()))
       await storeFiber.dispose()
       await registryFiber.dispose()
     },

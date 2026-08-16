@@ -7,6 +7,25 @@ import {
 } from '@market-cli/server'
 
 describe('instrument provider lifecycle over HTTP', () => {
+  it('disposes mounted provider resources when the server closes', async () => {
+    let closes = 0
+    const provider: InstrumentProvider = {
+      id: 'disposable-provider',
+      async listInstruments() {
+        return []
+      },
+      async close() {
+        closes += 1
+      },
+    }
+    const server = await createMarketServer()
+    await server.mountProvider(provider)
+
+    await server.close()
+
+    expect(closes).toBe(1)
+  })
+
   it('lists provider instruments and removes them after plugin disposal', async () => {
     const provider: InstrumentProvider = {
       id: 'fixture-cn-market',
