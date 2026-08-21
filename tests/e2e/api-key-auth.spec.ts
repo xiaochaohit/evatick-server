@@ -78,6 +78,9 @@ describe('CLI API key authentication', () => {
       expect(opened.status).toBe(200)
       expect(await opened.json()).toMatchObject({ data: { access_mode: 'public' } })
       expect((await fetch(`${first.url}/v1/health`)).status).toBe(200)
+      expect((await fetch(`${first.url}/v1/health`, {
+        headers: { authorization: 'Bearer an-invalid-key-that-must-be-ignored' },
+      })).status).toBe(200)
 
       const stored = await readFile(apiKeysPath, 'utf8')
       expect(stored).not.toContain(key)
