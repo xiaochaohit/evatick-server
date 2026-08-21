@@ -175,6 +175,7 @@ describe('local historical data synchronization', () => {
       expect(page).toContain('历史数据同步')
       expect(page).toContain('每日定时同步')
       expect(page).toContain('回溯最近（天）')
+      expect(page).toContain('跳过周末')
       expect(page).not.toContain('历史起始日')
       expect(page).toContain('aria-label="管理目录"')
       expect(page).toContain('href="/admin"')
@@ -190,21 +191,27 @@ describe('local historical data synchronization', () => {
       const scheduleResponse = await fetch(`${server.url}/v1/data-sync/schedule`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          enabled: true, time: '23:59', instrument_types: ['equity', 'index'],
+          enabled: true, time: '23:59', skip_weekends: true,
+          instrument_types: ['equity', 'index'],
           lookback_days: 10, adjustment: 'none', delay_ms: 750,
         }),
       })
       expect(scheduleResponse.status).toBe(200)
       expect(await scheduleResponse.json()).toMatchObject({
-        data: { enabled: true, time: '23:59', lookback_days: 10, next_run_at: expect.any(String) },
+        data: {
+          enabled: true, time: '23:59', skip_weekends: true,
+          lookback_days: 10, next_run_at: expect.any(String),
+        },
       })
       const status = await fetch(`${server.url}/v1/data-sync`).then((result) => result.json())
-      expect(status).toMatchObject({ data: { schedule: { enabled: true, time: '23:59' } } })
+      expect(status).toMatchObject({
+        data: { schedule: { enabled: true, time: '23:59', skip_weekends: true } },
+      })
 
       const invalidSchedule = await fetch(`${server.url}/v1/data-sync/schedule`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          enabled: true, time: '23:59', instrument_types: ['equity'],
+          enabled: true, time: '23:59', skip_weekends: true, instrument_types: ['equity'],
           lookback_days: 0, adjustment: 'none', delay_ms: 750,
         }),
       })

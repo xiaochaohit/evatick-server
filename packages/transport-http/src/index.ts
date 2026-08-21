@@ -539,6 +539,7 @@ export class EvaHttpService extends Service {
       Body: {
         enabled?: boolean
         time?: string
+        skip_weekends?: boolean
         instrument_types?: InstrumentType[]
         lookback_days?: number
         adjustment?: PriceAdjustment
@@ -548,12 +549,14 @@ export class EvaHttpService extends Service {
       const body = request.body
       const enabled = body?.enabled ?? false
       const time = body?.time
+      const skipWeekends = body?.skip_weekends ?? false
       const instrumentTypes = body?.instrument_types
       const lookbackDays = body?.lookback_days
       const adjustment = body?.adjustment
       const delayMs = body?.delay_ms
       if (
         typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) ||
+        typeof skipWeekends !== 'boolean' ||
         !Array.isArray(instrumentTypes) || instrumentTypes.length === 0 ||
         instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
         !Number.isInteger(lookbackDays) || (lookbackDays ?? 0) < 1 || (lookbackDays ?? 0) > 90 ||
@@ -564,12 +567,13 @@ export class EvaHttpService extends Service {
           type: 'urn:eva:problem:invalid-data-sync-schedule',
           title: 'Invalid data sync schedule', status: 400,
           code: 'INVALID_DATA_SYNC_SCHEDULE',
-          detail: 'enabled, time, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
+          detail: 'enabled, time, skip_weekends, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }
       const schedule = await this.dataSyncManager.updateSchedule({
-        enabled, time, instrument_types: instrumentTypes, lookback_days: lookbackDays!,
+        enabled, time, skip_weekends: skipWeekends,
+        instrument_types: instrumentTypes, lookback_days: lookbackDays!,
         adjustment, delay_ms: delayMs!,
       })
       return { schema: 'eva.data-sync-schedule.v1', data: schedule }

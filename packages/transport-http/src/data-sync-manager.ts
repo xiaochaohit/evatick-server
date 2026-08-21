@@ -70,6 +70,7 @@ export interface DataSyncStatus {
 export interface DataSyncSchedule {
   enabled: boolean
   time: string
+  skip_weekends: boolean
   instrument_types: readonly InstrumentType[]
   lookback_days: number
   adjustment: PriceAdjustment
@@ -124,6 +125,29 @@ interface DataSyncDependencies {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const MAX_ERRORS = 20
+const CHINA_TIME_OFFSET_MS = 8 * 60 * 60 * 1_000
+
+export function nextDataSyncRun(
+  now: Date,
+  time: string,
+  skipWeekends: boolean,
+): Date {
+  const [hour, minute] = time.split(':').map(Number)
+  const chinaNow = new Date(now.getTime() + CHINA_TIME_OFFSET_MS)
+  const year = chinaNow.getUTCFullYear()
+  const month = chinaNow.getUTCMonth()
+  const day = chinaNow.getUTCDate()
+  let dayOffset = 0
+  let next = new Date(Date.UTC(year, month, day, hour! - 8, minute!, 0, 0))
+  if (next.getTime() <= now.getTime()) dayOffset = 1
+
+  while (true) {
+    next = new Date(Date.UTC(year, month, day + dayOffset, hour! - 8, minute!, 0, 0))
+    const chinaWeekday = new Date(next.getTime() + CHINA_TIME_OFFSET_MS).getUTCDay()
+    if (!skipWeekends || (chinaWeekday !== 0 && chinaWeekday !== 6)) return next
+    dayOffset += 1
+  }
+}
 
 function subtractDays(value: string, days: number): string {
   const date = new Date(`${value}T00:00:00Z`)
@@ -147,6 +171,7 @@ export class DataSyncManager {
   private schedule: DataSyncSchedule = {
     enabled: false,
     time: '18:00',
+    skip_weekends: false,
     instrument_types: ['equity', 'index'],
     lookback_days: 10,
     adjustment: 'none',
@@ -629,7 +654,12 @@ export class DataSyncManager {
     if (typeof schedulePayload === 'string') {
       const stored = JSON.parse(schedulePayload) as Partial<DataSyncSchedule> & { start?: string }
       const { start: _legacyStart, ...current } = stored
-      this.schedule = { ...this.schedule, ...current, lookback_days: stored.lookback_days ?? 10 }
+      this.schedule = {
+        ...this.schedule,
+        ...current,
+        skip_weekends: stored.skip_weekends ?? false,
+        lookback_days: stored.lookback_days ?? 10,
+      }
     }
     this.configureScheduleTimer()
   }
@@ -641,10 +671,7 @@ export class DataSyncManager {
       this.schedule = { ...this.schedule, next_run_at: null }
       return
     }
-    const [hour, minute] = this.schedule.time.split(':').map(Number)
-    const next = new Date()
-    next.setHours(hour!, minute!, 0, 0)
-    if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1)
+    const next = nextDataSyncRun(new Date(), this.schedule.time, this.schedule.skip_weekends)
     this.schedule = { ...this.schedule, next_run_at: next.toISOString() }
     this.scheduleTimer = setTimeout(() => void this.triggerSchedule(), next.getTime() - Date.now())
     this.scheduleTimer.unref()
