@@ -101,11 +101,14 @@ listen host on loopback unless a trusted reverse proxy also supplies TLS and
 network controls.
 
 After signing in, open `/admin/api-keys` to create, inspect, or revoke CLI API
-keys. The plaintext key is shown only once. The server stores only SHA-256
-hashes in the owner-only `admin.apiKeysPath` file. All CLI-facing `/v1` market
-data routes, including health, require `Authorization: Bearer <api-key>` when
-the API-key store is configured. Management-only `/v1/data-*` and
-`/v1/local-data` routes continue to use the administrator session cookie.
+keys. Keys can be shown again or copied from the management console. The
+server keeps a SHA-256 verification hash and an AES-256-GCM encrypted copy in
+the owner-only `admin.apiKeysPath` file; the adjacent encryption-key file is
+also owner-only. Keys created by the earlier hash-only format remain valid but
+must be recreated before they can be viewed. All CLI-facing `/v1` market data
+routes, including health, require `Authorization: Bearer <api-key>` when the
+API-key store is configured. Management-only `/v1/data-*` and `/v1/local-data`
+routes continue to use the administrator session cookie.
 
 ## HTTP API
 

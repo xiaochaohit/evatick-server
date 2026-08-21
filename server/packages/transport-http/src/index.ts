@@ -329,6 +329,28 @@ export class MarketHttpService extends Service {
       }
     })
 
+    this.app.get<{ Params: { id: string } }>('/v1/api-keys/:id/secret', async (request, reply) => {
+      const revealed = await this.apiKeyAuth.reveal(request.params.id)
+      if (!revealed.found) {
+        return reply.code(404).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/api-key-not-found', title: 'API key not found',
+          status: 404, code: 'API_KEY_NOT_FOUND', detail: 'The API key does not exist.', retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      if (!revealed.key) {
+        return reply.code(409).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/api-key-not-recoverable', title: 'API key cannot be revealed',
+          status: 409, code: 'API_KEY_NOT_RECOVERABLE',
+          detail: 'This key was created before repeat viewing was supported. Revoke and recreate it.', retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      return reply.header('cache-control', 'no-store').send({
+        schema: 'market.api-key-secret.v1', data: { key: revealed.key },
+      })
+    })
+
     this.app.delete<{ Params: { id: string } }>('/v1/api-keys/:id', async (request, reply) => {
       if (!await this.apiKeyAuth.revoke(request.params.id)) {
         return reply.code(404).type('application/problem+json').send({

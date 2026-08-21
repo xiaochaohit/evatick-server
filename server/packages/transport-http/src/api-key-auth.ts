@@ -1,10 +1,12 @@
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
   randomBytes,
   randomUUID,
   timingSafeEqual,
 } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -14,11 +16,14 @@ interface StoredApiKey {
   name: string
   prefix: string
   key_hash: string
+  key_ciphertext?: string
+  key_iv?: string
+  key_tag?: string
   created_at: string
 }
 
 interface StoredApiKeys {
-  schema: 'market.api-keys.v1'
+  schema: 'market.api-keys.v1' | 'market.api-keys.v2'
   keys: StoredApiKey[]
 }
 
@@ -27,6 +32,7 @@ export interface ApiKeySummary {
   name: string
   prefix: string
   created_at: string
+  recoverable: boolean
 }
 
 function problem(reply: FastifyReply, detail: string) {
@@ -53,8 +59,16 @@ function extractBearerToken(request: FastifyRequest): string | undefined {
   return token || undefined
 }
 
+async function assertOwnerOnly(path: string, label: string): Promise<void> {
+  if (process.platform === 'win32') return
+  if ((await stat(path)).mode & 0o077) {
+    throw new Error(`${label} must be owner-only (use chmod 600)`)
+  }
+}
+
 export class ApiKeyAuth {
   private keys: StoredApiKey[] = []
+  private encryptionKey: Buffer | undefined
   private readonly ready: Promise<void>
 
   constructor(private readonly storagePath?: string) {
@@ -80,7 +94,7 @@ export class ApiKeyAuth {
   }
 
   list(): ApiKeySummary[] {
-    return this.keys.map(({ key_hash: _hash, ...summary }) => summary)
+    return this.keys.map((key) => this.summary(key))
   }
 
   async create(name: string): Promise<{ key: string; summary: ApiKeySummary }> {
@@ -97,12 +111,32 @@ export class ApiKeyAuth {
       name: normalizedName,
       prefix: key.slice(0, 18),
       key_hash: hashKey(key).toString('hex'),
+      ...this.encrypt(key),
       created_at: new Date().toISOString(),
     }
     this.keys.push(stored)
     await this.persist()
-    const { key_hash: _hash, ...summary } = stored
-    return { key, summary }
+    return { key, summary: this.summary(stored) }
+  }
+
+  async reveal(id: string): Promise<{ found: boolean; key?: string }> {
+    await this.ready
+    const stored = this.keys.find((key) => key.id === id)
+    if (!stored) return { found: false }
+    if (!stored.key_ciphertext || !stored.key_iv || !stored.key_tag || !this.encryptionKey) {
+      return { found: true }
+    }
+    const decipher = createDecipheriv(
+      'aes-256-gcm', this.encryptionKey, Buffer.from(stored.key_iv, 'base64url'),
+    )
+    decipher.setAuthTag(Buffer.from(stored.key_tag, 'base64url'))
+    return {
+      found: true,
+      key: Buffer.concat([
+        decipher.update(Buffer.from(stored.key_ciphertext, 'base64url')),
+        decipher.final(),
+      ]).toString('utf8'),
+    }
   }
 
   async revoke(id: string): Promise<boolean> {
@@ -130,11 +164,35 @@ export class ApiKeyAuth {
     })
   }
 
+  private summary(key: StoredApiKey): ApiKeySummary {
+    return {
+      id: key.id,
+      name: key.name,
+      prefix: key.prefix,
+      created_at: key.created_at,
+      recoverable: Boolean(key.key_ciphertext && key.key_iv && key.key_tag),
+    }
+  }
+
+  private encrypt(value: string): Pick<StoredApiKey, 'key_ciphertext' | 'key_iv' | 'key_tag'> {
+    if (!this.encryptionKey) throw new Error('API key encryption is not initialized')
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv)
+    const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
+    return {
+      key_ciphertext: ciphertext.toString('base64url'),
+      key_iv: iv.toString('base64url'),
+      key_tag: cipher.getAuthTag().toString('base64url'),
+    }
+  }
+
   private async initialize(): Promise<void> {
     if (!this.storagePath) return
+    this.encryptionKey = await this.loadEncryptionKey()
     try {
+      await assertOwnerOnly(this.storagePath, 'the API key store')
       const parsed = JSON.parse(await readFile(this.storagePath, 'utf8')) as StoredApiKeys
-      if (parsed.schema !== 'market.api-keys.v1' || !Array.isArray(parsed.keys) ||
+      if (!['market.api-keys.v1', 'market.api-keys.v2'].includes(parsed.schema) || !Array.isArray(parsed.keys) ||
           parsed.keys.some((key) => !this.validStoredKey(key))) {
         throw new Error('the API key store is invalid')
       }
@@ -148,16 +206,42 @@ export class ApiKeyAuth {
   private validStoredKey(value: unknown): value is StoredApiKey {
     if (!value || typeof value !== 'object') return false
     const key = value as Partial<StoredApiKey>
+    const encryptedFields = [key.key_ciphertext, key.key_iv, key.key_tag]
+    const validEncryption = encryptedFields.every((field) => field === undefined) ||
+      encryptedFields.every((field) => typeof field === 'string' && field.length > 0)
     return typeof key.id === 'string' && typeof key.name === 'string' &&
       typeof key.prefix === 'string' && /^[0-9a-f]{64}$/.test(key.key_hash ?? '') &&
-      typeof key.created_at === 'string'
+      typeof key.created_at === 'string' && validEncryption
+  }
+
+  private async loadEncryptionKey(): Promise<Buffer> {
+    const path = `${this.storagePath}.encryption-key`
+    await mkdir(dirname(path), { recursive: true })
+    try {
+      await assertOwnerOnly(path, 'the API key encryption key')
+      const key = await readFile(path)
+      if (key.length !== 32) throw new Error('the API key encryption key is invalid')
+      return key
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      const key = randomBytes(32)
+      try {
+        await writeFile(path, key, { mode: 0o600, flag: 'wx' })
+        return key
+      } catch (writeError) {
+        if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError
+        const existing = await readFile(path)
+        if (existing.length !== 32) throw new Error('the API key encryption key is invalid')
+        return existing
+      }
+    }
   }
 
   private async persist(): Promise<void> {
     if (!this.storagePath) return
     await mkdir(dirname(this.storagePath), { recursive: true })
     const temporary = `${this.storagePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-    await writeFile(temporary, `${JSON.stringify({ schema: 'market.api-keys.v1', keys: this.keys }, null, 2)}\n`, { mode: 0o600 })
+    await writeFile(temporary, `${JSON.stringify({ schema: 'market.api-keys.v2', keys: this.keys }, null, 2)}\n`, { mode: 0o600 })
     await rename(temporary, this.storagePath)
   }
 }

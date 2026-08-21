@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -34,7 +35,9 @@ describe('CLI API key authentication', () => {
       const cookie = await login(first.url)
       const page = await fetch(`${first.url}/admin/api-keys`, { headers: { cookie } })
       expect(page.status).toBe(200)
-      expect(await page.text()).toContain('API 密钥')
+      const pageHtml = await page.text()
+      expect(pageHtml).toContain('API 密钥')
+      expect(pageHtml).toContain('复制')
 
       const created = await fetch(`${first.url}/v1/api-keys`, {
         method: 'POST',
@@ -59,10 +62,17 @@ describe('CLI API key authentication', () => {
       })
       expect(JSON.stringify(listedBody)).not.toContain(key)
 
+      const revealed = await fetch(`${first.url}/v1/api-keys/${keyId}/secret`, {
+        headers: { cookie },
+      })
+      expect(revealed.status).toBe(200)
+      expect(await revealed.json()).toMatchObject({ data: { key } })
+
       const stored = await readFile(apiKeysPath, 'utf8')
       expect(stored).not.toContain(key)
-      expect(JSON.parse(stored)).toMatchObject({ schema: 'market.api-keys.v1' })
+      expect(JSON.parse(stored)).toMatchObject({ schema: 'market.api-keys.v2' })
       expect((await stat(apiKeysPath)).mode & 0o777).toBe(0o600)
+      expect((await stat(`${apiKeysPath}.encryption-key`)).mode & 0o777).toBe(0o600)
     } finally {
       await first.close()
     }
@@ -72,6 +82,8 @@ describe('CLI API key authentication', () => {
       expect((await fetch(`${restarted.url}/v1/health`, {
         headers: { authorization: `Bearer ${key}` },
       })).status).toBe(200)
+      expect(await (await fetch(`${restarted.url}/v1/api-keys/${keyId}/secret`)).json())
+        .toMatchObject({ data: { key } })
 
       // Management auth is intentionally disabled in this test-only server instance.
       expect((await fetch(`${restarted.url}/v1/api-keys/${keyId}`, { method: 'DELETE' })).status).toBe(204)
@@ -80,6 +92,38 @@ describe('CLI API key authentication', () => {
       })).status).toBe(401)
     } finally {
       await restarted.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps hash-only keys valid while reporting that their secret cannot be recovered', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'market-api-keys-v1-'))
+    const apiKeysPath = join(directory, 'api-keys.json')
+    const legacyKey = 'mk_legacy_test_key'
+    const id = randomUUID()
+    await writeFile(apiKeysPath, JSON.stringify({
+      schema: 'market.api-keys.v1',
+      keys: [{
+        id,
+        name: 'legacy-key',
+        prefix: 'mk_legacy_test_key'.slice(0, 18),
+        key_hash: createHash('sha256').update(legacyKey).digest('hex'),
+        created_at: new Date().toISOString(),
+      }],
+    }), { mode: 0o600 })
+    const server = await createMarketServer({ apiKeysPath, healthCheckIntervalMs: 0 })
+    try {
+      expect((await fetch(`${server.url}/v1/health`, {
+        headers: { authorization: `Bearer ${legacyKey}` },
+      })).status).toBe(200)
+      expect(await (await fetch(`${server.url}/v1/api-keys`)).json()).toMatchObject({
+        data: [{ id, recoverable: false }],
+      })
+      const reveal = await fetch(`${server.url}/v1/api-keys/${id}/secret`)
+      expect(reveal.status).toBe(409)
+      expect(await reveal.json()).toMatchObject({ code: 'API_KEY_NOT_RECOVERABLE' })
+    } finally {
+      await server.close()
       await rm(directory, { recursive: true, force: true })
     }
   })
