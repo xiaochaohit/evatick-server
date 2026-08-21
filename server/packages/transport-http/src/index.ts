@@ -23,7 +23,7 @@ import type {
 } from '@market-cli/cordis-runtime'
 
 import { AdminAuth } from './admin-auth.js'
-import { dataSourceDashboardHtml } from './data-source-dashboard.js'
+import { dataBrowserDashboardHtml } from './data-browser-dashboard.js'
 import { DataSyncManager } from './data-sync-manager.js'
 import { dataSyncDashboardHtml } from './data-sync-dashboard.js'
 import { ProviderHealthMonitor } from './provider-health.js'
@@ -105,10 +105,13 @@ export class MarketHttpService extends Service {
       }))
 
     this.app.setErrorHandler((error, _request, reply) => {
-      const normalized = error as { statusCode?: number; message?: string }
+      const normalized = error as { statusCode?: number; message?: string; stack?: string }
       const status = normalized.statusCode && normalized.statusCode >= 400 && normalized.statusCode < 500
         ? normalized.statusCode
         : 500
+      if (status === 500) {
+        process.stderr.write(`[market-http] ${normalized.stack ?? normalized.message ?? String(error)}\n`)
+      }
       return reply
         .code(status)
         .type('application/problem+json')
@@ -138,7 +141,7 @@ export class MarketHttpService extends Service {
     }
     this.healthMonitor = new ProviderHealthMonitor(
       () => ctx.marketProviderRegistry.list(),
-      Math.max(this.config.healthCheckIntervalMs ?? 60_000, 0),
+      Math.max(this.config.healthCheckIntervalMs ?? 3_600_000, 0),
       Math.max(this.config.healthCheckTimeoutMs ?? routingOptions.timeoutMs, 1),
     )
 
@@ -282,15 +285,81 @@ export class MarketHttpService extends Service {
       generated_at: new Date().toISOString(),
     })
 
-    this.app.get('/admin/data-sources', async (_request, reply) => reply
+    this.app.get('/admin', async (_request, reply) => reply
       .header('cache-control', 'no-store')
       .type('text/html; charset=utf-8')
-      .send(dataSourceDashboardHtml))
+      .send(dataBrowserDashboardHtml))
+
+    this.app.get('/admin/data-sources', async (_request, reply) => reply.redirect('/admin#data-sources'))
 
     this.app.get('/admin/data-sync', async (_request, reply) => reply
       .header('cache-control', 'no-store')
       .type('text/html; charset=utf-8')
       .send(dataSyncDashboardHtml))
+
+    this.app.get('/admin/data-browser', async (_request, reply) => reply.redirect('/admin'))
+
+    this.app.get<{
+      Querystring: { q?: string; type?: string; limit?: string; offset?: string }
+    }>('/v1/local-data/instruments', async (request, reply) => {
+      const limit = Number(request.query.limit ?? 30)
+      const offset = Number(request.query.offset ?? 0)
+      const instrumentType = request.query.type
+      if (
+        !Number.isInteger(limit) || limit < 1 || limit > 100 ||
+        !Number.isInteger(offset) || offset < 0 ||
+        (instrumentType !== undefined && instrumentType !== 'equity' && instrumentType !== 'index') ||
+        (request.query.q?.length ?? 0) > 100
+      ) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/invalid-local-data-query',
+          title: 'Invalid local data query',
+          status: 400,
+          code: 'INVALID_LOCAL_DATA_QUERY',
+          detail: 'q, type, limit, or offset is invalid.',
+          retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      const [result, status] = await Promise.all([
+        this.dataSyncManager.browseInstruments({
+          query: request.query.q,
+          instrumentType,
+          limit,
+          offset,
+        }),
+        this.dataSyncManager.status(),
+      ])
+      return {
+        schema: 'market.local-instrument-list.v1',
+        data: result.items,
+        page: { total: result.total, limit, offset },
+        meta: { storage: status.storage, generated_at: new Date().toISOString() },
+      }
+    })
+
+    this.app.get<{
+      Params: { instrumentId: string }
+      Querystring: { limit?: string }
+    }>('/v1/local-data/instruments/:instrumentId/bars', async (request, reply) => {
+      const limit = Number(request.query.limit ?? 20)
+      if (!Number.isInteger(limit) || limit < 1 || limit > 250) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/invalid-local-bar-query',
+          title: 'Invalid local bar query',
+          status: 400,
+          code: 'INVALID_LOCAL_BAR_QUERY',
+          detail: 'limit must be an integer between 1 and 250.',
+          retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      return {
+        schema: 'market.local-bar-list.v1',
+        data: await this.dataSyncManager.browseBars(request.params.instrumentId, limit),
+        meta: { generated_at: new Date().toISOString() },
+      }
+    })
 
     this.app.get('/v1/data-sync', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
@@ -403,6 +472,46 @@ export class MarketHttpService extends Service {
       }
     })
 
+    this.app.put<{
+      Body: {
+        enabled?: boolean
+        time?: string
+        instrument_types?: InstrumentType[]
+        lookback_days?: number
+        adjustment?: PriceAdjustment
+        delay_ms?: number
+      }
+    }>('/v1/data-sync/schedule', async (request, reply) => {
+      const body = request.body
+      const enabled = body?.enabled ?? false
+      const time = body?.time
+      const instrumentTypes = body?.instrument_types
+      const lookbackDays = body?.lookback_days
+      const adjustment = body?.adjustment
+      const delayMs = body?.delay_ms
+      if (
+        typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) ||
+        !Array.isArray(instrumentTypes) || instrumentTypes.length === 0 ||
+        instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
+        !Number.isInteger(lookbackDays) || (lookbackDays ?? 0) < 1 || (lookbackDays ?? 0) > 90 ||
+        adjustment === undefined || !['none', 'forward', 'backward'].includes(adjustment) ||
+        !Number.isInteger(delayMs) || (delayMs ?? -1) < 0 || (delayMs ?? 0) > 10_000
+      ) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/invalid-data-sync-schedule',
+          title: 'Invalid data sync schedule', status: 400,
+          code: 'INVALID_DATA_SYNC_SCHEDULE',
+          detail: 'enabled, time, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      const schedule = await this.dataSyncManager.updateSchedule({
+        enabled, time, instrument_types: instrumentTypes, lookback_days: lookbackDays!,
+        adjustment, delay_ms: delayMs!,
+      })
+      return { schema: 'market.data-sync-schedule.v1', data: schedule }
+    })
+
     this.app.get('/v1/data-sources', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
       return await dataSourcesResponse()
@@ -424,7 +533,7 @@ export class MarketHttpService extends Service {
         const intervalSeconds = request.body?.interval_seconds
         if (
           !Number.isInteger(intervalSeconds) ||
-          (intervalSeconds ?? 0) < 5 ||
+          (intervalSeconds ?? 0) < 3_600 ||
           (intervalSeconds ?? 0) > 86_400
         ) {
           return reply.code(400).type('application/problem+json').send({
@@ -432,7 +541,7 @@ export class MarketHttpService extends Service {
             title: 'Invalid health check interval',
             status: 400,
             code: 'INVALID_HEALTH_CHECK_INTERVAL',
-            detail: 'interval_seconds must be an integer between 5 and 86400.',
+            detail: 'interval_seconds must be an integer between 3600 and 86400.',
             retryable: false,
             request_id: `req_${randomUUID()}`,
           })

@@ -127,7 +127,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
   </style>
 </head>
 <body>
-  ${adminNavigation('sources')}
+  ${adminNavigation('home')}
   <main class="shell">
     <header>
       <div>
@@ -169,10 +169,10 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
         </div>
         <label for="interval">检测频率</label>
         <select id="interval">
-          <option value="30">每 30 秒</option>
-          <option value="60">每 1 分钟</option>
-          <option value="300">每 5 分钟</option>
-          <option value="900">每 15 分钟</option>
+          <option value="3600">每 1 小时</option>
+          <option value="10800">每 3 小时</option>
+          <option value="21600">每 6 小时</option>
+          <option value="86400">每 24 小时</option>
         </select>
         <div class="schedule-actions">
           <button class="primary" id="save">启用 / 更新</button>
@@ -209,7 +209,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
       byId('updated').textContent = '更新于 ' + formatTime(new Date().toISOString());
       byId('schedule-status').textContent = body.schedule.enabled ? '运行中 · ' + body.schedule.interval_seconds + 's' : '已停用';
       byId('next-check').textContent = formatTime(body.schedule.next_check_at);
-      if ([30, 60, 300, 900].includes(body.schedule.interval_seconds)) byId('interval').value = String(body.schedule.interval_seconds);
+      if ([3600, 10800, 21600, 86400].includes(body.schedule.interval_seconds)) byId('interval').value = String(body.schedule.interval_seconds);
 
       if (!sources.length) {
         byId('sources').innerHTML = '<div class="empty">尚未挂载数据源</div>';

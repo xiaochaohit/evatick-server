@@ -16,6 +16,7 @@ export interface DataSyncRequest {
   adjustment: PriceAdjustment
   limit?: number
   delayMs?: number
+  lookbackDays?: number
 }
 
 export interface SyncedBars {
@@ -33,6 +34,7 @@ export interface DataSyncRun {
   adjustment: PriceAdjustment
   limit: number | null
   delay_ms: number
+  lookback_days: number
   total: number
   completed: number
   succeeded: number
@@ -62,6 +64,18 @@ export interface DataSyncStatus {
   }
   active_run: DataSyncRun | null
   last_run: DataSyncRun | null
+  schedule: DataSyncSchedule
+}
+
+export interface DataSyncSchedule {
+  enabled: boolean
+  time: string
+  instrument_types: readonly InstrumentType[]
+  lookback_days: number
+  adjustment: PriceAdjustment
+  delay_ms: number
+  next_run_at: string | null
+  last_triggered_at: string | null
 }
 
 export interface LocalQuote {
@@ -72,6 +86,29 @@ export interface LocalQuote {
   high: string
   low: string
   previousClose: string | null
+  volume: number | null
+  turnover: string | null
+}
+
+export interface LocalInstrumentSummary {
+  instrument_id: string
+  instrument_type: InstrumentType
+  symbol: string
+  name: string
+  venue: string | null
+  publisher: string | null
+  records: number
+  first_trading_date: string
+  last_trading_date: string
+  latest_close: string
+}
+
+export interface LocalBarSummary {
+  trading_date: string
+  open: string
+  high: string
+  low: string
+  close: string
   volume: number | null
   turnover: string | null
 }
@@ -106,6 +143,17 @@ export class DataSyncManager {
   private lastRun: DataSyncRun | null = null
   private cancelled = false
   private execution: Promise<void> | null = null
+  private scheduleTimer: ReturnType<typeof setTimeout> | undefined
+  private schedule: DataSyncSchedule = {
+    enabled: false,
+    time: '18:00',
+    instrument_types: ['equity', 'index'],
+    lookback_days: 10,
+    adjustment: 'none',
+    delay_ms: 750,
+    next_run_at: null,
+    last_triggered_at: null,
+  }
 
   constructor(private readonly dependencies: DataSyncDependencies) {
     this.ready = this.initialize()
@@ -135,7 +183,107 @@ export class DataSyncManager {
       },
       active_run: this.activeRun,
       last_run: this.lastRun,
+      schedule: this.schedule,
     }
+  }
+
+  async updateSchedule(schedule: Omit<DataSyncSchedule, 'next_run_at' | 'last_triggered_at'>): Promise<DataSyncSchedule> {
+    await this.ready
+    this.schedule = {
+      ...schedule,
+      next_run_at: null,
+      last_triggered_at: this.schedule.last_triggered_at,
+    }
+    this.configureScheduleTimer()
+    await this.persistSchedule()
+    return this.schedule
+  }
+
+  async browseInstruments(request: {
+    query?: string
+    instrumentType?: InstrumentType
+    limit: number
+    offset: number
+  }): Promise<{ total: number; items: readonly LocalInstrumentSummary[] }> {
+    await this.ready
+    const query = request.query?.replaceAll(/\s+/g, '') ?? ''
+    const instrumentType = request.instrumentType ?? ''
+    const filters = {
+      query: `%${query.toLowerCase()}%`,
+      instrument_type: instrumentType,
+    }
+    const totalReader = await this.db.runAndReadAll(`
+      SELECT count(*)::INTEGER AS total
+      FROM instruments i
+      WHERE ($instrument_type = '' OR i.instrument_type = $instrument_type)
+        AND ($query = '%%' OR lower(i.symbol) LIKE $query OR lower(i.name) LIKE $query)
+        AND EXISTS (
+          SELECT 1 FROM daily_bars b
+          WHERE b.instrument_id = i.instrument_id AND b.adjustment = 'none'
+        )
+    `, filters)
+    const reader = await this.db.runAndReadAll(`
+      WITH selected AS (
+        SELECT *
+        FROM instruments i
+        WHERE ($instrument_type = '' OR i.instrument_type = $instrument_type)
+          AND ($query = '%%' OR lower(i.symbol) LIKE $query OR lower(i.name) LIKE $query)
+          AND EXISTS (
+            SELECT 1 FROM daily_bars b
+            WHERE b.instrument_id = i.instrument_id AND b.adjustment = 'none'
+          )
+        ORDER BY i.instrument_type, i.symbol
+        LIMIT $limit OFFSET $offset
+      )
+      SELECT
+        i.instrument_id, i.instrument_type, i.symbol, i.name, i.venue, i.publisher,
+        count(*)::BIGINT AS records,
+        min(b.trading_date)::VARCHAR AS first_trading_date,
+        max(b.trading_date)::VARCHAR AS last_trading_date,
+        arg_max(b.close, b.trading_date)::VARCHAR AS latest_close
+      FROM selected i
+      JOIN daily_bars b ON b.instrument_id = i.instrument_id AND b.adjustment = 'none'
+      GROUP BY i.instrument_id, i.instrument_type, i.symbol, i.name, i.venue, i.publisher
+      ORDER BY i.instrument_type, i.symbol
+    `, { ...filters, limit: request.limit, offset: request.offset })
+    return {
+      total: Number(totalReader.getRowObjectsJson()[0]?.total ?? 0),
+      items: reader.getRowObjectsJson().map((row) => ({
+        instrument_id: String(row.instrument_id),
+        instrument_type: row.instrument_type as InstrumentType,
+        symbol: String(row.symbol),
+        name: String(row.name),
+        venue: row.venue === null ? null : String(row.venue),
+        publisher: row.publisher === null ? null : String(row.publisher),
+        records: Number(row.records),
+        first_trading_date: String(row.first_trading_date),
+        last_trading_date: String(row.last_trading_date),
+        latest_close: String(row.latest_close),
+      })),
+    }
+  }
+
+  async browseBars(
+    instrumentId: string,
+    limit: number,
+  ): Promise<readonly LocalBarSummary[]> {
+    await this.ready
+    const reader = await this.db.runAndReadAll(`
+      SELECT trading_date::VARCHAR AS trading_date, open, high, low, close, volume, turnover
+      FROM daily_bars
+      WHERE instrument_id = $instrument_id AND adjustment = 'none'
+      ORDER BY trading_date DESC
+      LIMIT $limit
+    `, { instrument_id: instrumentId, limit })
+    return reader.getRowObjectsJson().map((row) => ({
+      trading_date: String(row.trading_date),
+      open: String(row.open),
+      high: String(row.high),
+      low: String(row.low),
+      close: String(row.close),
+      volume: row.volume === null ? null : Number(row.volume),
+      turnover: row.turnover === null ? null : String(row.turnover),
+    }))
   }
 
   async start(request: DataSyncRequest): Promise<DataSyncRun> {
@@ -163,6 +311,7 @@ export class DataSyncManager {
       adjustment: request.adjustment,
       limit: request.limit ?? null,
       delay_ms: request.delayMs ?? 0,
+      lookback_days: request.lookbackDays ?? 10,
       total: instruments.length,
       completed: 0,
       succeeded: 0,
@@ -369,6 +518,7 @@ export class DataSyncManager {
 
   async close(): Promise<void> {
     await this.ready
+    if (this.scheduleTimer) clearTimeout(this.scheduleTimer)
     this.cancelled = true
     await this.execution
     this.connection?.closeSync()
@@ -427,6 +577,11 @@ export class DataSyncManager {
         updated_at TIMESTAMP NOT NULL,
         PRIMARY KEY (instrument_id, adjustment)
       );
+      CREATE TABLE IF NOT EXISTS sync_schedule (
+        id INTEGER PRIMARY KEY,
+        payload JSON NOT NULL,
+        updated_at TIMESTAMP NOT NULL
+      );
       CREATE TEMP TABLE IF NOT EXISTS staged_daily_bars (
         instrument_id VARCHAR,
         instrument_type VARCHAR,
@@ -457,14 +612,69 @@ export class DataSyncManager {
     `)
     const latestRow = latest.getRowObjectsJson()[0]
     if (typeof latestRow?.payload === 'string') {
+      const storedRun = JSON.parse(latestRow.payload) as DataSyncRun
       this.lastRun = {
-        ...JSON.parse(latestRow.payload) as DataSyncRun,
+        ...storedRun,
+        lookback_days: storedRun.lookback_days ?? 10,
         status: latestRow.status as DataSyncRun['status'],
         finished_at: typeof latestRow.finished_at === 'string'
           ? latestRow.finished_at.replace(' ', 'T') + 'Z'
           : null,
       }
     }
+    const scheduleReader = await this.db.runAndReadAll(`
+      SELECT payload::VARCHAR AS payload FROM sync_schedule WHERE id = 1
+    `)
+    const schedulePayload = scheduleReader.getRowObjectsJson()[0]?.payload
+    if (typeof schedulePayload === 'string') {
+      const stored = JSON.parse(schedulePayload) as Partial<DataSyncSchedule> & { start?: string }
+      const { start: _legacyStart, ...current } = stored
+      this.schedule = { ...this.schedule, ...current, lookback_days: stored.lookback_days ?? 10 }
+    }
+    this.configureScheduleTimer()
+  }
+
+  private configureScheduleTimer(): void {
+    if (this.scheduleTimer) clearTimeout(this.scheduleTimer)
+    this.scheduleTimer = undefined
+    if (!this.schedule.enabled) {
+      this.schedule = { ...this.schedule, next_run_at: null }
+      return
+    }
+    const [hour, minute] = this.schedule.time.split(':').map(Number)
+    const next = new Date()
+    next.setHours(hour!, minute!, 0, 0)
+    if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1)
+    this.schedule = { ...this.schedule, next_run_at: next.toISOString() }
+    this.scheduleTimer = setTimeout(() => void this.triggerSchedule(), next.getTime() - Date.now())
+    this.scheduleTimer.unref()
+  }
+
+  private async triggerSchedule(): Promise<void> {
+    this.schedule = { ...this.schedule, last_triggered_at: new Date().toISOString() }
+    this.configureScheduleTimer()
+    await this.persistSchedule()
+    if (this.activeRun) return
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
+    try {
+      await this.start({
+        instrumentTypes: this.schedule.instrument_types,
+        start: '1990-01-01',
+        end: today,
+        adjustment: this.schedule.adjustment,
+        delayMs: this.schedule.delay_ms,
+        lookbackDays: this.schedule.lookback_days,
+      })
+    } catch (error) {
+      process.stderr.write(`[data-sync-schedule] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
+    }
+  }
+
+  private async persistSchedule(): Promise<void> {
+    await this.db.run(`
+      INSERT INTO sync_schedule VALUES (1, $payload::JSON, current_timestamp)
+      ON CONFLICT (id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+    `, { payload: JSON.stringify(this.schedule) })
   }
 
   private async execute(
@@ -485,7 +695,7 @@ export class DataSyncManager {
           this.coveredStart(instrument.instrumentId, run.adjustment),
         ])
         const start = storedRange && coveredStart && run.start >= coveredStart
-          ? laterDate(run.start, subtractDays(storedRange.last, 10))
+          ? laterDate(run.start, subtractDays(storedRange.last, run.lookback_days))
           : run.start
         const result = await this.dependencies.loadBars(instrument, {
           start,

@@ -116,10 +116,17 @@ describe('data source management', () => {
       expect(pageResponse.status).toBe(200)
       expect(pageResponse.headers.get('content-type')).toContain('text/html')
       const page = await pageResponse.text()
-      expect(page).toContain('数据源控制台')
+      expect(page).toContain('数据浏览')
+      expect(page).toContain('数据源健康')
       expect(page).toContain('aria-label="管理目录"')
-      expect(page).toContain('class="active" aria-current="page" href="/admin/data-sources"')
+      expect(page).toContain('class="active" aria-current="page" href="/admin"')
       expect(page).toContain('href="/admin/data-sync"')
+
+      const invalidInterval = await fetch(`${server.url}/v1/data-sources/schedule`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, interval_seconds: 3599 }),
+      })
+      expect(invalidInterval.status).toBe(400)
     } finally {
       await server.close()
     }

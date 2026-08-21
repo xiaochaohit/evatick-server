@@ -27,18 +27,18 @@ export const adminNavigationStyles = String.raw`
   }
 `
 
-export function adminNavigation(active: 'sources' | 'sync' | 'account'): string {
-  const item = (id: 'sources' | 'sync' | 'account', href: string, icon: string, label: string) =>
+export function adminNavigation(active: 'home' | 'sync' | 'account'): string {
+  const item = (id: 'home' | 'sync' | 'account', href: string, icon: string, label: string) =>
     `<a${active === id ? ' class="active" aria-current="page"' : ''} href="${href}"><span class="nav-icon">${icon}</span>${label}</a>`
   return `<div class="site-header">
     <div class="topbar">
-      <a class="brand" href="/admin/data-sources"><span class="brand-mark">MC</span><span>Market Console</span></a>
+      <a class="brand" href="/admin"><span class="brand-mark">MC</span><span>Market Console</span></a>
       <nav class="admin-nav" aria-label="管理目录">
-        ${item('sources', '/admin/data-sources', '01', '数据源健康')}
+        ${item('home', '/admin', '01', '数据首页')}
         ${item('sync', '/admin/data-sync', '02', '数据同步')}
       </nav>
       <div class="topbar-meta"><span class="online-dot"></span>LOCAL SERVICE<a class="account-link" href="/admin/password">修改密码</a><button class="logout-button" id="admin-logout" type="button">退出</button></div>
     </div>
-    <div class="utility-strip"><div class="utility-inner"><span>MARKET SERVER</span><span>DATA OPERATIONS</span><span>127.0.0.1:8878</span></div></div>
+    <div class="utility-strip"><div class="utility-inner"><span>MARKET SERVER</span><span>DATA OPERATIONS</span><span>LOCAL WAREHOUSE</span></div></div>
   </div><script>document.getElementById('admin-logout')?.addEventListener('click',async()=>{await fetch('/admin/session',{method:'DELETE'});location.assign('/admin/login')})</script>`
 }

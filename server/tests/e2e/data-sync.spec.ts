@@ -111,6 +111,32 @@ describe('local historical data synchronization', () => {
       })
       expect(starts).toHaveLength(2)
 
+      const browserList = await fetch(
+        `${server.url}/v1/local-data/instruments?q=${encodeURIComponent('浦发 银行')}&type=equity&limit=10&offset=0`,
+      )
+      expect(browserList.status).toBe(200)
+      expect(await browserList.json()).toMatchObject({
+        schema: 'market.local-instrument-list.v1',
+        data: [{
+          instrument_id: 'cn:equity:XSHG:600000',
+          symbol: '600000',
+          name: '浦发银行',
+          records: 1,
+          first_trading_date: '2026-01-12',
+          last_trading_date: '2026-01-12',
+          latest_close: '10.4',
+        }],
+        page: { total: 1, limit: 10, offset: 0 },
+      })
+      const browserBars = await fetch(
+        `${server.url}/v1/local-data/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/bars?limit=20`,
+      )
+      expect(browserBars.status).toBe(200)
+      expect(await browserBars.json()).toMatchObject({
+        schema: 'market.local-bar-list.v1',
+        data: [{ trading_date: '2026-01-12', close: '10.4' }],
+      })
+
       const remoteBars = await fetch(
         `${server.url}/v1/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/bars?interval=1d&start=2026-02-01&end=2026-02-01`,
       )
@@ -147,9 +173,42 @@ describe('local historical data synchronization', () => {
       expect(response.headers.get('content-type')).toContain('text/html')
       const page = await response.text()
       expect(page).toContain('历史数据同步')
+      expect(page).toContain('每日定时同步')
+      expect(page).toContain('回溯最近（天）')
+      expect(page).not.toContain('历史起始日')
       expect(page).toContain('aria-label="管理目录"')
-      expect(page).toContain('href="/admin/data-sources"')
+      expect(page).toContain('href="/admin"')
       expect(page).toContain('class="active" aria-current="page" href="/admin/data-sync"')
+
+      const browserResponse = await fetch(`${server.url}/admin`)
+      expect(browserResponse.status).toBe(200)
+      const browserPage = await browserResponse.text()
+      expect(browserPage).toContain('数据浏览')
+      expect(browserPage).toContain('数据源健康')
+      expect(browserPage).toContain('class="active" aria-current="page" href="/admin"')
+
+      const scheduleResponse = await fetch(`${server.url}/v1/data-sync/schedule`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          enabled: true, time: '23:59', instrument_types: ['equity', 'index'],
+          lookback_days: 10, adjustment: 'none', delay_ms: 750,
+        }),
+      })
+      expect(scheduleResponse.status).toBe(200)
+      expect(await scheduleResponse.json()).toMatchObject({
+        data: { enabled: true, time: '23:59', lookback_days: 10, next_run_at: expect.any(String) },
+      })
+      const status = await fetch(`${server.url}/v1/data-sync`).then((result) => result.json())
+      expect(status).toMatchObject({ data: { schedule: { enabled: true, time: '23:59' } } })
+
+      const invalidSchedule = await fetch(`${server.url}/v1/data-sync/schedule`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          enabled: true, time: '23:59', instrument_types: ['equity'],
+          lookback_days: 0, adjustment: 'none', delay_ms: 750,
+        }),
+      })
+      expect(invalidSchedule.status).toBe(400)
     } finally {
       await server.close()
     }
