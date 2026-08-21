@@ -29,6 +29,7 @@ export interface MarketServerOptions {
   adminUsername?: string
   adminPassword?: string
   adminCredentialsPath?: string
+  apiKeysPath?: string
   host?: string
   port?: number
 }

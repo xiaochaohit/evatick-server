@@ -27,8 +27,8 @@ export const adminNavigationStyles = String.raw`
   }
 `
 
-export function adminNavigation(active: 'home' | 'sync' | 'account'): string {
-  const item = (id: 'home' | 'sync' | 'account', href: string, icon: string, label: string) =>
+export function adminNavigation(active: 'home' | 'sync' | 'keys' | 'account'): string {
+  const item = (id: 'home' | 'sync' | 'keys' | 'account', href: string, icon: string, label: string) =>
     `<a${active === id ? ' class="active" aria-current="page"' : ''} href="${href}"><span class="nav-icon">${icon}</span>${label}</a>`
   return `<div class="site-header">
     <div class="topbar">
@@ -36,6 +36,7 @@ export function adminNavigation(active: 'home' | 'sync' | 'account'): string {
       <nav class="admin-nav" aria-label="管理目录">
         ${item('home', '/admin', '01', '数据首页')}
         ${item('sync', '/admin/data-sync', '02', '数据同步')}
+        ${item('keys', '/admin/api-keys', '03', 'API 密钥')}
       </nav>
       <div class="topbar-meta"><span class="online-dot"></span>LOCAL SERVICE<a class="account-link" href="/admin/password">修改密码</a><button class="logout-button" id="admin-logout" type="button">退出</button></div>
     </div>

@@ -6,6 +6,8 @@ info:
 paths:
   /v1/health:
     get:
+      security:
+        - ApiKey: []
       operationId: getHealth
       summary: Report process liveness and provider readiness
       responses:
@@ -139,6 +141,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /v1/instruments:
     get:
+      security:
+        - ApiKey: []
       operationId: listInstruments
       summary: List supported financial instruments
       parameters:
@@ -163,6 +167,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /v1/instruments/{instrument_id}:
     get:
+      security:
+        - ApiKey: []
       operationId: getInstrument
       summary: Get one canonical financial instrument
       parameters:
@@ -186,6 +192,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /v1/instrument-search:
     get:
+      security:
+        - ApiKey: []
       operationId: searchInstruments
       summary: Search the canonical instrument catalog
       parameters:
@@ -215,6 +223,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /v1/instrument-resolve:
     post:
+      security:
+        - ApiKey: []
       operationId: resolveInstrument
       summary: Resolve user input to a canonical instrument
       requestBody:
@@ -238,6 +248,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /v1/instruments/{instrument_id}/quote:
     get:
+      security:
+        - ApiKey: []
       operationId: getQuote
       summary: Get the latest quote for an instrument
       parameters:
@@ -257,6 +269,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /v1/instruments/{instrument_id}/bars:
     get:
+      security:
+        - ApiKey: []
       operationId: getBars
       summary: Get normalized OHLCV bars for an instrument
       parameters:
@@ -292,6 +306,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /v1/indices/{instrument_id}/constituents:
     get:
+      security:
+        - ApiKey: []
       operationId: getIndexConstituents
       summary: Get index constituent memberships
       parameters:
@@ -315,6 +331,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 components:
+  securitySchemes:
+    ApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: Market API key
   parameters:
     InstrumentId:
       name: instrument_id

@@ -15,7 +15,8 @@
   "admin": {
     "username": "admin",
     "initialPassword": "<set-in-private-config>",
-    "credentialsPath": "/var/lib/market-server/admin-credentials.json"
+    "credentialsPath": "/var/lib/market-server/admin-credentials.json",
+    "apiKeysPath": "/var/lib/market-server/api-keys.json"
   },
   "providers": {
     "akshare": {

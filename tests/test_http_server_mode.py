@@ -13,6 +13,7 @@ from tests.test_cli_entrypoint import run_cli
 
 class _MarketHandler(BaseHTTPRequestHandler):
     requests: list[tuple[str, str, Any]] = []
+    authorization_headers: list[str | None] = []
 
     def log_message(self, format: str, *args: object) -> None:
         pass
@@ -26,6 +27,7 @@ class _MarketHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
+        _MarketHandler.authorization_headers.append(self.headers.get("Authorization"))
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length))
         self.requests.append(("POST", self.path, body))
@@ -46,6 +48,7 @@ class _MarketHandler(BaseHTTPRequestHandler):
         })
 
     def do_GET(self) -> None:
+        _MarketHandler.authorization_headers.append(self.headers.get("Authorization"))
         self.requests.append(("GET", self.path, None))
         if self.path == "/v1/health":
             self._send({"schema": "market.health.v1", "data": {"status": "ok", "providers": 1}})
@@ -93,6 +96,7 @@ class _MarketHandler(BaseHTTPRequestHandler):
 class MarketServerFixture:
     def __enter__(self) -> str:
         _MarketHandler.requests = []
+        _MarketHandler.authorization_headers = []
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _MarketHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -118,6 +122,35 @@ def test_health_and_instrument_discovery_use_the_server_contract() -> None:
     assert json.loads(search.stdout) == [
         {"instrument_id": "cn:equity:XSHE:000001", "name": "平安银行"}
     ]
+
+
+def test_unified_configuration_supplies_base_url_and_api_key(tmp_path: Path) -> None:
+    configuration = tmp_path / "config.json"
+    with MarketServerFixture() as url:
+        configured = run_cli(
+            "--config", str(configuration), "config", "set",
+            "--base-url", url, "--api-key", "mk_test_secret",
+        )
+        health = run_cli(
+            "--config", str(configuration), "health",
+            environment_overrides={"MARKET_CLI_SERVER_URL": "", "MARKET_CLI_API_KEY": ""},
+        )
+        shown = run_cli("--config", str(configuration), "config", "show")
+
+    assert configured.returncode == 0
+    assert json.loads(health.stdout)["status"] == "ok"
+    assert _MarketHandler.authorization_headers == ["Bearer mk_test_secret"]
+    assert json.loads(shown.stdout) == {
+        "path": str(configuration.resolve()),
+        "base_url": url,
+        "api_key": "********",
+    }
+    assert configuration.stat().st_mode & 0o777 == 0o600
+    assert json.loads(configuration.read_text()) == {
+        "schema": "market.cli-config.v1",
+        "base_url": url,
+        "api_key": "mk_test_secret",
+    }
 
 
 def test_stock_commands_resolve_then_query_normalized_data() -> None:

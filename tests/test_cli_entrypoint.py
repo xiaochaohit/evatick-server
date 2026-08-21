@@ -33,7 +33,7 @@ def test_root_help_is_compact_plain_text() -> None:
     assert result.returncode == 0
     assert result.stderr == ""
     assert result.stdout.startswith("NAME\n    market-cli\n\nPURPOSE\n")
-    assert "market-cli [--server-url URL] COMMAND [OPTIONS]" in result.stdout
+    assert "market-cli [--config PATH] [--server-url URL] [--api-key KEY] COMMAND [OPTIONS]" in result.stdout
     assert "\x1b[" not in result.stdout
 
 

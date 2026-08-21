@@ -9,6 +9,13 @@ from urllib.parse import quote, urlencode
 import click
 
 from market_cli import __version__
+from market_cli.config import (
+    CliConfiguration,
+    ConfigurationError,
+    default_configuration_path,
+    load_configuration,
+    save_configuration,
+)
 from market_cli.http_client import InvocationError, MarketHttpClient
 from market_cli.output import export_result
 from market_cli.serialization import SerializationError, dumps
@@ -22,8 +29,8 @@ class MarketRoot(click.Group):
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         formatter.write("NAME\n    market-cli\n\n")
         formatter.write("PURPOSE\n    通过 Market Server 查询第一版股票和指数数据。\n\n")
-        formatter.write("USAGE\n    market-cli [--server-url URL] COMMAND [OPTIONS]\n\n")
-        formatter.write("OPTIONS\n    --server-url URL\n\n")
+        formatter.write("USAGE\n    market-cli [--config PATH] [--server-url URL] [--api-key KEY] COMMAND [OPTIONS]\n\n")
+        formatter.write("OPTIONS\n    --config PATH\n    --server-url URL\n    --api-key KEY\n\n")
         formatter.write("COMMANDS\n")
         for name in self.list_commands(ctx):
             formatter.write(f"    {name}\n")
@@ -44,8 +51,8 @@ def data_options(function: F) -> F:
 
 
 def _client(timeout: float, retries: int) -> MarketHttpClient:
-    server_url = click.get_current_context().find_root().params["server_url"]
-    return MarketHttpClient(server_url, timeout, retries)
+    params = click.get_current_context().find_root().params
+    return MarketHttpClient(params["server_url"], timeout, retries, params["api_key"])
 
 
 def _emit(
@@ -85,13 +92,62 @@ def _resolve(
 
 @click.group(cls=MarketRoot)
 @click.option(
+    "--config",
+    "configuration_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="统一配置文件路径。",
+)
+@click.option(
     "--server-url",
     envvar="MARKET_CLI_SERVER_URL",
-    default="http://127.0.0.1:8765",
-    show_default=True,
+    default=None,
 )
-def cli(server_url: str) -> None:
+@click.option("--api-key", envvar="MARKET_CLI_API_KEY", default=None, hidden=True)
+def cli(configuration_path: Path | None, server_url: str | None, api_key: str | None) -> None:
     """Market Server client."""
+    path = (configuration_path or default_configuration_path()).expanduser()
+    configuration = load_configuration(path)
+    context = click.get_current_context()
+    context.params["configuration_path"] = path
+    context.params["server_url"] = server_url or configuration.base_url or "http://127.0.0.1:8765"
+    context.params["api_key"] = api_key or configuration.api_key
+
+
+@cli.group("config")
+def config_group() -> None:
+    """Manage the unified CLI configuration file."""
+
+
+@config_group.command("set")
+@click.option("--base-url")
+@click.option("--api-key", hidden=True)
+def config_set_command(base_url: str | None, api_key: str | None) -> None:
+    if base_url is None and api_key is None:
+        raise click.UsageError("at least one of --base-url or --api-key is required")
+    root = click.get_current_context().find_root()
+    path: Path = root.params["configuration_path"]
+    current = load_configuration(path)
+    updated = CliConfiguration(
+        base_url=base_url if base_url is not None else current.base_url,
+        api_key=api_key if api_key is not None else current.api_key,
+    )
+    if updated.base_url and not updated.base_url.startswith(("http://", "https://")):
+        raise click.UsageError("--base-url must start with http:// or https://")
+    save_configuration(path, updated)
+    click.echo(dumps({"path": str(path.resolve()), "updated": True}))
+
+
+@config_group.command("show")
+def config_show_command() -> None:
+    root = click.get_current_context().find_root()
+    path: Path = root.params["configuration_path"]
+    configuration = load_configuration(path)
+    click.echo(dumps({
+        "path": str(path.resolve()),
+        "base_url": configuration.base_url,
+        "api_key": "********" if configuration.api_key else None,
+    }))
 
 
 @cli.command("health")
@@ -329,6 +385,8 @@ def main() -> None:
         _fail(error.code, error.message, False, 1)
     except InvocationError as error:
         _fail(error.code, error.message, error.retryable, 1)
+    except ConfigurationError as error:
+        _fail("INVALID_CONFIGURATION", str(error), False, 1)
 
 
 def _fail(code: str, message: str, retryable: bool, exit_code: int) -> None:

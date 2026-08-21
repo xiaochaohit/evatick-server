@@ -19,7 +19,9 @@ class InvocationError(Exception):
 
 
 class MarketHttpClient:
-    def __init__(self, base_url: str, timeout: float, retries: int) -> None:
+    def __init__(
+        self, base_url: str, timeout: float, retries: int, api_key: str | None = None
+    ) -> None:
         if not base_url.startswith(("http://", "https://")):
             raise InvocationError(
                 "INVALID_SERVER_URL",
@@ -29,6 +31,7 @@ class MarketHttpClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retries = retries
+        self.api_key = api_key
 
     def request(
         self,
@@ -46,6 +49,7 @@ class MarketHttpClient:
             headers={
                 "Accept": "application/json",
                 "User-Agent": f"market-cli/{__version__}",
+                **({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}),
                 **({"Content-Type": "application/json"} if body else {}),
             },
         )

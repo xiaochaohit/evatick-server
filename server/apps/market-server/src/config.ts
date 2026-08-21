@@ -20,6 +20,7 @@ export interface MarketServerConfiguration {
     username: string
     initialPassword?: string
     credentialsPath: string
+    apiKeysPath: string
   }
   providers: {
     akshare: {
@@ -76,7 +77,7 @@ function parseConfiguration(value: unknown, configurationPath: string): MarketSe
   const storage = objectAt(root.storage, 'configuration.storage')
   rejectUnknownKeys(storage, ['catalogPath', 'historyPath'], 'configuration.storage')
   const admin = objectAt(root.admin, 'configuration.admin')
-  rejectUnknownKeys(admin, ['username', 'initialPassword', 'credentialsPath'], 'configuration.admin')
+  rejectUnknownKeys(admin, ['username', 'initialPassword', 'credentialsPath', 'apiKeysPath'], 'configuration.admin')
   const providers = objectAt(root.providers, 'configuration.providers')
   rejectUnknownKeys(providers, ['akshare'], 'configuration.providers')
   const akshare = objectAt(providers.akshare, 'configuration.providers.akshare')
@@ -114,6 +115,7 @@ function parseConfiguration(value: unknown, configurationPath: string): MarketSe
       username,
       ...(initialPassword === undefined ? {} : { initialPassword }),
       credentialsPath: configuredPath(admin.credentialsPath, 'configuration.admin.credentialsPath', configurationDirectory),
+      apiKeysPath: configuredPath(admin.apiKeysPath ?? './data/api-keys.json', 'configuration.admin.apiKeysPath', configurationDirectory),
     },
     providers: {
       akshare: {

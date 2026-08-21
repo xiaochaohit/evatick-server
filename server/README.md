@@ -87,7 +87,7 @@ The configuration has four sections:
 | --- | --- |
 | `server` | Listen host and port, provider retry/deadline settings, health-check schedule |
 | `storage` | SQLite catalog and DuckDB history paths |
-| `admin` | Initial username/password and the password-hash credential-store path |
+| `admin` | Initial username/password, credential-store path, and API-key-store path |
 | `providers.akshare` | Python executable used by the AKShare provider |
 
 Relative file paths are resolved from the configuration file's directory.
@@ -99,6 +99,13 @@ logged; after that store exists, remove `initialPassword` from the configuration
 The management console uses an HttpOnly, SameSite session cookie. Keep the
 listen host on loopback unless a trusted reverse proxy also supplies TLS and
 network controls.
+
+After signing in, open `/admin/api-keys` to create, inspect, or revoke CLI API
+keys. The plaintext key is shown only once. The server stores only SHA-256
+hashes in the owner-only `admin.apiKeysPath` file. All CLI-facing `/v1` market
+data routes, including health, require `Authorization: Bearer <api-key>` when
+the API-key store is configured. Management-only `/v1/data-*` and
+`/v1/local-data` routes continue to use the administrator session cookie.
 
 ## HTTP API
 

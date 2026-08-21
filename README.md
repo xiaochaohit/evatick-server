@@ -18,19 +18,28 @@ market-cli --help
 market-cli version
 ```
 
-The default server is `http://127.0.0.1:8765`. Override it per invocation or by
-environment variable:
+The CLI reads the server address and API key from one owner-only JSON
+configuration file. The default path is `~/.config/market-cli/config.json`
+(`$XDG_CONFIG_HOME` and `$MARKET_CLI_CONFIG` are honored):
 
 ```shell
-market-cli --server-url https://market.example.com health
-export MARKET_CLI_SERVER_URL=https://market.example.com
+market-cli config set --base-url https://market.example.com --api-key 'mk_...'
+market-cli config show
+market-cli health
 ```
+
+The file uses schema `market.cli-config.v1` and is written with mode `0600`.
+`config show` redacts the key. For temporary overrides, use `--server-url`,
+`--api-key`, `MARKET_CLI_SERVER_URL`, or `MARKET_CLI_API_KEY`; explicit options
+take precedence over environment variables, which take precedence over the file.
+The default server address remains `http://127.0.0.1:8765` when no value is set.
 
 ## Commands
 
 ```text
 market-cli health
 market-cli version
+market-cli config set|show
 
 market-cli instrument list|search|resolve|show
 market-cli stock quotes|bars

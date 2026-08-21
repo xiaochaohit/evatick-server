@@ -195,7 +195,8 @@ export class AdminAuth {
     return path.startsWith('/admin') ||
       path.startsWith('/v1/data-sync') ||
       path.startsWith('/v1/data-sources') ||
-      path.startsWith('/v1/local-data')
+      path.startsWith('/v1/local-data') ||
+      path.startsWith('/v1/api-keys')
   }
 
   private authenticate(request: FastifyRequest): boolean {

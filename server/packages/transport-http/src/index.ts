@@ -23,6 +23,8 @@ import type {
 } from '@market-cli/cordis-runtime'
 
 import { AdminAuth } from './admin-auth.js'
+import { ApiKeyAuth } from './api-key-auth.js'
+import { apiKeyDashboardHtml } from './api-key-dashboard.js'
 import { dataBrowserDashboardHtml } from './data-browser-dashboard.js'
 import { DataSyncManager } from './data-sync-manager.js'
 import { dataSyncDashboardHtml } from './data-sync-dashboard.js'
@@ -73,6 +75,7 @@ export class MarketHttpService extends Service {
   private readonly healthMonitor: ProviderHealthMonitor
   private readonly dataSyncManager: DataSyncManager
   private readonly adminAuth: AdminAuth
+  private readonly apiKeyAuth: ApiKeyAuth
   private address: string | undefined
 
   constructor(
@@ -86,6 +89,7 @@ export class MarketHttpService extends Service {
       adminUsername?: string
       adminPassword?: string
       adminCredentialsPath?: string
+      apiKeysPath?: string
     } = {},
   ) {
     super(ctx, 'marketHttp')
@@ -134,6 +138,8 @@ export class MarketHttpService extends Service {
       credentialsPath: this.config.adminCredentialsPath,
     })
     this.adminAuth.install(this.app)
+    this.apiKeyAuth = new ApiKeyAuth(this.config.apiKeysPath)
+    this.apiKeyAuth.install(this.app)
 
     const routingOptions = {
       retryAttempts: Math.max(this.config.retryAttempts ?? 2, 1),
@@ -298,6 +304,41 @@ export class MarketHttpService extends Service {
       .send(dataSyncDashboardHtml))
 
     this.app.get('/admin/data-browser', async (_request, reply) => reply.redirect('/admin'))
+
+    this.app.get('/admin/api-keys', async (_request, reply) => reply
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(apiKeyDashboardHtml))
+
+    this.app.get('/v1/api-keys', async () => ({
+      schema: 'market.api-key-list.v1',
+      data: this.apiKeyAuth.list(),
+    }))
+
+    this.app.post<{ Body: { name?: string } }>('/v1/api-keys', async (request, reply) => {
+      try {
+        const created = await this.apiKeyAuth.create(request.body?.name ?? '')
+        return reply.code(201).send({ schema: 'market.api-key-created.v1', data: created })
+      } catch (error) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/invalid-api-key-name',
+          title: 'Invalid API key name', status: 400, code: 'INVALID_API_KEY_NAME',
+          detail: error instanceof Error ? error.message : 'API key name is invalid.', retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+    })
+
+    this.app.delete<{ Params: { id: string } }>('/v1/api-keys/:id', async (request, reply) => {
+      if (!await this.apiKeyAuth.revoke(request.params.id)) {
+        return reply.code(404).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/api-key-not-found', title: 'API key not found',
+          status: 404, code: 'API_KEY_NOT_FOUND', detail: 'The API key does not exist.', retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      return reply.code(204).send()
+    })
 
     this.app.get<{
       Querystring: { q?: string; type?: string; limit?: string; offset?: string }
@@ -1087,6 +1128,7 @@ export class MarketHttpService extends Service {
   async listen(host = '127.0.0.1', port = 0): Promise<string> {
     if (!this.address) {
       await this.adminAuth.initializeForListen()
+      await this.apiKeyAuth.initializeForListen()
       this.address = await this.app.listen({ host, port })
     }
     return this.address

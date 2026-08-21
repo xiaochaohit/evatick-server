@@ -15,6 +15,7 @@ export async function startDefaultMarketServer(configurationPath: string) {
   await mkdir(dirname(configuration.storage.catalogPath), { recursive: true })
   await mkdir(dirname(configuration.storage.historyPath), { recursive: true })
   await mkdir(dirname(configuration.admin.credentialsPath), { recursive: true })
+  await mkdir(dirname(configuration.admin.apiKeysPath), { recursive: true })
   await assertPythonExecutable(configuration.providers.akshare.pythonExecutable)
   const server = await createMarketServer({
     host: configuration.server.host,
@@ -24,6 +25,7 @@ export async function startDefaultMarketServer(configurationPath: string) {
     adminUsername: configuration.admin.username,
     adminPassword: configuration.admin.initialPassword,
     adminCredentialsPath: configuration.admin.credentialsPath,
+    apiKeysPath: configuration.admin.apiKeysPath,
     retryAttempts: configuration.server.retryAttempts,
     requestTimeoutMs: configuration.server.requestTimeoutMs,
     healthCheckIntervalMs: configuration.server.healthCheckIntervalSeconds * 1_000,
