@@ -7,6 +7,8 @@ import {
   ProviderError,
   type BarsCall,
   type ConstituentsCall,
+  type DataSourceCheckCall,
+  type DataSourceCheckResult,
   type InstrumentProvider,
   type ProviderBar,
   type ProviderConstituent,
@@ -19,6 +21,7 @@ type JsonRecord = Record<string, unknown>
 export type AkshareRequest =
   | { operation: 'list_stocks' }
   | { operation: 'list_indices' }
+  | { operation: 'health'; source: string; instrumentType: 'equity' | 'index' }
   | {
       operation: 'bars'
       instrumentType: 'equity' | 'index'
@@ -87,7 +90,11 @@ function subtractMinutes(value: string, minutes: number): string {
 
 function stockVenue(symbol: string): 'XSHG' | 'XSHE' | 'XBSE' {
   if (symbol.startsWith('6')) return 'XSHG'
-  if (symbol.startsWith('4') || symbol.startsWith('8')) return 'XBSE'
+  if (
+    symbol.startsWith('4') ||
+    symbol.startsWith('8') ||
+    symbol.startsWith('92')
+  ) return 'XBSE'
   return 'XSHE'
 }
 
@@ -166,6 +173,40 @@ function bridgeRunner(
 
 export class AkshareProvider implements InstrumentProvider {
   readonly id = 'akshare'
+  readonly dataSources = [
+    {
+      id: 'sina', name: '新浪财经',
+      categories: ['equity', 'index'],
+      capabilities: {
+        equity: ['日线', '分时', '行情快照'],
+        index: ['日线', '分时', '行情快照'],
+      },
+    },
+    {
+      id: 'eastmoney', name: '东方财富',
+      categories: ['equity', 'index'],
+      capabilities: {
+        equity: ['日线', '分时', '行情快照'],
+        index: ['日线', '分时', '行情快照'],
+      },
+    },
+    {
+      id: 'tencent', name: '腾讯财经',
+      categories: ['equity', 'index'],
+      capabilities: {
+        equity: ['日线', '行情快照'],
+        index: ['日线', '行情快照'],
+      },
+    },
+    {
+      id: 'baostock', name: 'BaoStock',
+      categories: ['equity', 'index'],
+      capabilities: {
+        equity: ['日线', '行情快照'],
+        index: ['日线', '行情快照'],
+      },
+    },
+  ] as const
   private readonly run: AkshareRunner
   private instruments: readonly ProviderInstrument[] | undefined
 
@@ -174,6 +215,28 @@ export class AkshareProvider implements InstrumentProvider {
       options.pythonExecutable ?? 'python3',
       options.pythonModule ?? 'market_server_akshare',
     )
+  }
+
+  async checkDataSource(call: DataSourceCheckCall): Promise<DataSourceCheckResult> {
+    if (!this.dataSources.some((source) => source.id === call.sourceId)) {
+      throw new ProviderError('UNKNOWN_DATA_SOURCE', `unknown AKShare data source: ${call.sourceId}`, false)
+    }
+    const source = this.dataSources.find((candidate) => candidate.id === call.sourceId)
+    if (!source?.categories.some((category) => category === call.category)) {
+      throw new ProviderError(
+        'UNSUPPORTED_DATA_SOURCE_CATEGORY',
+        `${call.sourceId} does not support ${call.category}`,
+        false,
+      )
+    }
+    const result = await this.run({
+      operation: 'health', source: call.sourceId, instrumentType: call.category,
+    }, call.signal)
+    if (result.source !== call.sourceId) {
+      throw new ProviderError('PROVIDER_INVALID_RESPONSE', 'health probe returned a different data source', false)
+    }
+    const recordsChecked = asNumber(result.data[0]?.records)
+    return { recordsChecked }
   }
 
   async listInstruments(signal = new AbortController().signal): Promise<readonly ProviderInstrument[]> {

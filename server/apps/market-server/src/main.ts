@@ -33,13 +33,26 @@ function integerFromEnvironment(
 export async function startDefaultMarketServer() {
   const catalogPath = process.env.MARKET_SERVER_CATALOG_PATH ??
     join(defaultDataDirectory(), 'catalog.sqlite')
+  const historyPath = process.env.MARKET_SERVER_HISTORY_PATH ??
+    join(defaultDataDirectory(), 'market-history.duckdb')
   await mkdir(dirname(catalogPath), { recursive: true })
+  await mkdir(dirname(historyPath), { recursive: true })
   const server = await createMarketServer({
     host: process.env.MARKET_SERVER_HOST ?? '127.0.0.1',
     port: integerFromEnvironment('MARKET_SERVER_PORT', 8765, 65_535),
     catalogPath,
+    historyPath,
     retryAttempts: integerFromEnvironment('MARKET_SERVER_RETRY_ATTEMPTS', 2),
     requestTimeoutMs: integerFromEnvironment('MARKET_SERVER_REQUEST_TIMEOUT_MS', 30_000),
+    healthCheckIntervalMs: integerFromEnvironment(
+      'MARKET_SERVER_HEALTH_CHECK_INTERVAL_SECONDS',
+      60,
+      86_400,
+    ) * 1_000,
+    healthCheckTimeoutMs: integerFromEnvironment(
+      'MARKET_SERVER_HEALTH_CHECK_TIMEOUT_MS',
+      10_000,
+    ),
   })
   const providerPython = fileURLToPath(new URL(
     process.platform === 'win32'

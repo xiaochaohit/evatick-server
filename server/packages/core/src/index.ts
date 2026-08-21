@@ -72,6 +72,25 @@ export interface ConstituentsCall extends ProviderCall {
   asOf?: string
 }
 
+export type DataSourceCategory = 'equity' | 'index'
+
+export interface ProviderDataSource {
+  id: string
+  name: string
+  categories: readonly DataSourceCategory[]
+  capabilities: Partial<Record<DataSourceCategory, readonly string[]>>
+}
+
+export interface DataSourceCheckCall {
+  sourceId: string
+  category: DataSourceCategory
+  signal: AbortSignal
+}
+
+export interface DataSourceCheckResult {
+  recordsChecked: number | null
+}
+
 export interface ProviderInstrument {
   type: InstrumentType
   market: 'CN'
@@ -88,7 +107,9 @@ export interface ProviderInstrument {
 
 export interface InstrumentProvider {
   readonly id: string
+  readonly dataSources?: readonly ProviderDataSource[]
   listInstruments(signal?: AbortSignal): Promise<readonly ProviderInstrument[]>
+  checkDataSource?(call: DataSourceCheckCall): Promise<DataSourceCheckResult>
   close?(): Promise<void> | void
   getQuote?(call: ProviderCall): Promise<ProviderQuote>
   getBars?(call: BarsCall): Promise<readonly ProviderBar[]>

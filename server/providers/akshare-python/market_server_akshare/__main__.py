@@ -60,6 +60,55 @@ class SourcesExhausted(Exception):
         self.errors = errors
 
 
+class UpstreamConnectionError(Exception):
+    pass
+
+
+def _baostock_symbol(provider_symbol: str) -> str:
+    normalized = (
+        _index_symbol(provider_symbol)
+        if provider_symbol.startswith("csi")
+        else provider_symbol
+    )
+    for prefix in ("sh", "sz", "bj"):
+        if normalized.startswith(prefix):
+            return f"{prefix}.{normalized.removeprefix(prefix)}"
+    raise ValueError(f"unsupported BaoStock symbol: {provider_symbol}")
+
+
+def _baostock_bars(
+    request: dict[str, Any], provider_symbol: str
+) -> list[dict[str, Any]]:
+    import baostock
+
+    login = baostock.login()
+    if login.error_code != "0":
+        raise UpstreamConnectionError(
+            f"BaoStock login failed: {login.error_msg}"
+        )
+    try:
+        result = baostock.query_history_k_data_plus(
+            _baostock_symbol(provider_symbol),
+            "date,open,high,low,close,volume,amount",
+            start_date=(request.get("start") or "1990-01-01")[:10],
+            end_date=(request.get("end") or "2050-01-01")[:10],
+            frequency="d",
+            adjustflag={"none": "3", "forward": "2", "backward": "1"}[
+                request.get("adjustment", "none")
+            ],
+        )
+        if result.error_code != "0":
+            raise UpstreamConnectionError(
+                f"BaoStock query failed: {result.error_msg}"
+            )
+        records: list[dict[str, Any]] = []
+        while result.next():
+            records.append(dict(zip(result.fields, result.get_row_data())))
+        return records
+    finally:
+        baostock.logout()
+
+
 def _equity_bars(
     akshare: Any, request: dict[str, Any], source: str
 ) -> list[dict[str, Any]]:
@@ -84,6 +133,20 @@ def _equity_bars(
             adjust=adjustment,
             timeout=None,
         ))
+    if source == "tencent":
+        records = _records(akshare.stock_zh_a_hist_tx(
+            symbol=provider_symbol,
+            start_date=_compact_date(request.get("start"), "19900101"),
+            end_date=_compact_date(request.get("end"), "20500101"),
+            adjust=adjustment,
+            timeout=None,
+        ))
+        return [
+            {**record, "volume": record.get("amount"), "amount": None}
+            for record in records
+        ]
+    if source == "baostock":
+        return _baostock_bars(request, provider_symbol)
     raise ValueError(f"unsupported equity bars source: {source}")
 
 
@@ -210,6 +273,8 @@ def _index_bars(
             start_date=_compact_date(request.get("start"), "19900101"),
             end_date=_compact_date(request.get("end"), "20500101"),
         ))
+    if source == "baostock":
+        return _baostock_bars(request, request["providerSymbol"])
     raise ValueError(f"unsupported index bars source: {source}")
 
 
@@ -261,10 +326,44 @@ def _market_data(
     raise SourcesExhausted(errors)
 
 
+def _health_check(
+    akshare: Any, source: str, instrument_type: str
+) -> dict[str, Any]:
+    configured_sources = {
+        configured_source
+        for sources in SOURCE_ORDER.values()
+        for configured_source in sources
+    }
+    if source not in configured_sources:
+        raise ValueError(f"unknown data source: {source}")
+    today = datetime.now().date()
+    request = {
+        "providerSymbol": "sz000001" if instrument_type == "equity" else "sh000001",
+        "start": (today - timedelta(days=21)).isoformat(),
+        "end": today.isoformat(),
+        "adjustment": "none",
+    }
+    if instrument_type == "equity":
+        if source not in SOURCE_ORDER["equity_bars"]:
+            raise ValueError(f"{source} does not support equity health checks")
+        records = _equity_bars(akshare, request, source)
+    elif instrument_type == "index":
+        if source not in SOURCE_ORDER["index_bars"]:
+            raise ValueError(f"{source} does not support index health checks")
+        records = _index_bars(akshare, request, source)
+    else:
+        raise ValueError(f"unknown instrument type: {instrument_type}")
+    if not records:
+        raise ValueError(f"{source} health probe returned no data")
+    return {"data": [{"records": len(records)}], "source": source}
+
+
 def _is_transient(error: Exception) -> bool:
     if isinstance(error, SourcesExhausted):
         return bool(error.errors) and any(_is_transient(item) for item in error.errors)
-    return isinstance(error, (requests.ConnectionError, requests.Timeout)) or (
+    return isinstance(
+        error, (requests.ConnectionError, requests.Timeout, UpstreamConnectionError)
+    ) or (
         isinstance(error, requests.HTTPError)
         and error.response is not None
         and error.response.status_code in {429, 502, 503, 504}
@@ -279,6 +378,10 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
         return {"data": _records(akshare.stock_info_a_code_name()), "source": "akshare"}
     if operation == "list_indices":
         return {"data": _records(akshare.index_stock_info()), "source": "akshare"}
+    if operation == "health":
+        return _health_check(
+            akshare, request["source"], request["instrumentType"]
+        )
     if operation in {"bars", "quote"}:
         return _market_data(akshare, request)
     if operation == "constituents":

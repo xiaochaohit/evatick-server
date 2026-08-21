@@ -12,10 +12,47 @@ from market_server_akshare.sources import SOURCE_ORDER
 
 
 class SourceRoutingTest(unittest.TestCase):
+    def test_health_checks_source_and_instrument_category_independently(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def equity(**_kwargs):
+            calls.append(("sina", "equity"))
+            return [{"date": "2026-08-20", "close": 11.1}]
+
+        def index(**_kwargs):
+            calls.append(("tencent", "index"))
+            return [{"date": "2026-08-20", "close": 3800}]
+
+        fake_akshare = SimpleNamespace(
+            stock_zh_a_daily=equity,
+            stock_zh_index_daily_tx=index,
+        )
+        with patch.dict(sys.modules, {"akshare": fake_akshare}):
+            equity_result = execute({
+                "operation": "health", "source": "sina",
+                "instrumentType": "equity",
+            })
+            index_result = execute({
+                "operation": "health", "source": "tencent",
+                "instrumentType": "index",
+            })
+
+        self.assertEqual(calls, [("sina", "equity"), ("tencent", "index")])
+        self.assertEqual(equity_result, {
+            "source": "sina", "data": [{"records": 1}],
+        })
+        self.assertEqual(index_result, {
+            "source": "tencent", "data": [{"records": 1}],
+        })
+
     def test_source_order_is_configured_per_data_type(self) -> None:
-        self.assertEqual(SOURCE_ORDER["equity_bars"], ("sina", "eastmoney"))
         self.assertEqual(
-            SOURCE_ORDER["index_bars"], ("sina", "tencent", "eastmoney")
+            SOURCE_ORDER["equity_bars"],
+            ("sina", "eastmoney", "tencent", "baostock"),
+        )
+        self.assertEqual(
+            SOURCE_ORDER["index_bars"],
+            ("sina", "tencent", "eastmoney", "baostock"),
         )
         self.assertEqual(
             SOURCE_ORDER["equity_intraday_bars"], ("sina", "eastmoney")
@@ -24,6 +61,85 @@ class SourceRoutingTest(unittest.TestCase):
             SOURCE_ORDER["index_intraday_bars"], ("sina", "eastmoney")
         )
         self.assertIsNot(SOURCE_ORDER["equity_bars"], SOURCE_ORDER["index_bars"])
+
+    def test_equity_bars_fall_back_to_tencent(self) -> None:
+        calls: list[str] = []
+
+        def sina(**_kwargs):
+            calls.append("sina")
+            raise requests.ConnectionError("sina unavailable")
+
+        def eastmoney(**_kwargs):
+            calls.append("eastmoney")
+            raise requests.ConnectionError("eastmoney unavailable")
+
+        def tencent(**_kwargs):
+            calls.append("tencent")
+            return [{"date": "2026-08-20", "close": 11.1, "amount": 1234}]
+
+        fake_akshare = SimpleNamespace(
+            stock_zh_a_daily=sina,
+            stock_zh_a_hist=eastmoney,
+            stock_zh_a_hist_tx=tencent,
+        )
+        with patch.dict(sys.modules, {"akshare": fake_akshare}):
+            result = execute({
+                "operation": "bars", "instrumentType": "equity",
+                "providerSymbol": "sz000001", "interval": "1d",
+                "adjustment": "none",
+            })
+
+        self.assertEqual(calls, ["sina", "eastmoney", "tencent"])
+        self.assertEqual(result["source"], "tencent")
+        self.assertEqual(result["data"][0]["volume"], 1234)
+        self.assertIsNone(result["data"][0]["amount"])
+
+    def test_baostock_health_checks_equity_and_index(self) -> None:
+        queried_codes: list[str] = []
+        logout_calls: list[bool] = []
+
+        class Result:
+            error_code = "0"
+            error_msg = ""
+            fields = ["date", "open", "high", "low", "close", "volume", "amount"]
+
+            def __init__(self):
+                self.pending = True
+
+            def next(self):
+                pending, self.pending = self.pending, False
+                return pending
+
+            def get_row_data(self):
+                return ["2026-08-20", "10", "11", "9", "10.5", "123", "456"]
+
+        def query(code, _fields, **kwargs):
+            queried_codes.append(code)
+            self.assertEqual(kwargs["frequency"], "d")
+            self.assertEqual(kwargs["adjustflag"], "3")
+            return Result()
+
+        fake_baostock = SimpleNamespace(
+            login=lambda: SimpleNamespace(error_code="0", error_msg=""),
+            logout=lambda: logout_calls.append(True),
+            query_history_k_data_plus=query,
+        )
+        with patch.dict(sys.modules, {
+            "akshare": SimpleNamespace(), "baostock": fake_baostock,
+        }):
+            equity = execute({
+                "operation": "health", "source": "baostock",
+                "instrumentType": "equity",
+            })
+            index = execute({
+                "operation": "health", "source": "baostock",
+                "instrumentType": "index",
+            })
+
+        self.assertEqual(queried_codes, ["sz.000001", "sh.000001"])
+        self.assertEqual(logout_calls, [True, True])
+        self.assertEqual(equity["data"], [{"records": 1}])
+        self.assertEqual(index["data"], [{"records": 1}])
 
     def test_equity_intraday_bars_fall_back_and_keep_the_requested_period(self) -> None:
         calls: list[tuple[str, str]] = []

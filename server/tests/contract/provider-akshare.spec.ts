@@ -3,6 +3,32 @@ import { describe, expect, it } from 'vitest'
 import { AkshareProvider, type AkshareRunner } from '@market-cli/provider-akshare'
 
 describe('AKShare provider contract', () => {
+  it('declares and independently checks categorized upstream data sources', async () => {
+    const runner: AkshareRunner = async (request) => {
+      expect(request).toEqual({
+        operation: 'health', source: 'sina', instrumentType: 'equity',
+      })
+      return { source: 'sina', data: [{ records: 12 }] }
+    }
+    const provider = new AkshareProvider({ runner })
+
+    expect(provider.dataSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'sina', name: '新浪财经', categories: ['equity', 'index'],
+      }),
+      expect.objectContaining({ id: 'tencent', categories: ['equity', 'index'] }),
+      expect.objectContaining({ id: 'baostock', categories: ['equity', 'index'] }),
+    ]))
+    await expect(provider.checkDataSource!({
+      sourceId: 'sina', category: 'equity',
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ recordsChecked: 12 })
+    await expect(provider.checkDataSource!({
+      sourceId: 'missing', category: 'equity',
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'UNKNOWN_DATA_SOURCE' })
+  })
+
   it('normalizes A-share and index instruments without leaking AKShare fields', async () => {
     const signals: AbortSignal[] = []
     const runner: AkshareRunner = async (request, signal) => {
@@ -12,6 +38,7 @@ describe('AKShare provider contract', () => {
           { code: '600000', name: '浦发银行' },
           { code: '000001', name: '平安银行' },
           { code: '430047', name: '诺思兰德' },
+          { code: '920000', name: '安徽凤凰' },
         ] }
       }
       return { source: 'akshare', data: [
@@ -27,6 +54,7 @@ describe('AKShare provider contract', () => {
       expect.objectContaining({ symbol: '600000', venue: 'XSHG', providerSymbol: 'sh600000' }),
       expect.objectContaining({ symbol: '000001', venue: 'XSHE', providerSymbol: 'sz000001' }),
       expect.objectContaining({ symbol: '430047', venue: 'XBSE', providerSymbol: 'bj430047' }),
+      expect.objectContaining({ symbol: '920000', venue: 'XBSE', providerSymbol: 'bj920000' }),
       expect.objectContaining({ symbol: '000001', publisher: 'SSE', providerSymbol: 'sh000001' }),
       expect.objectContaining({ symbol: '000300', publisher: 'CSI', providerSymbol: 'csi000300' }),
       expect.objectContaining({ symbol: '399001', publisher: 'SZSE', providerSymbol: 'sz399001' }),

@@ -22,7 +22,10 @@ export interface MarketServer {
 export interface MarketServerOptions {
   retryAttempts?: number
   requestTimeoutMs?: number
+  healthCheckIntervalMs?: number
+  healthCheckTimeoutMs?: number
   catalogPath?: string
+  historyPath?: string
   host?: string
   port?: number
 }

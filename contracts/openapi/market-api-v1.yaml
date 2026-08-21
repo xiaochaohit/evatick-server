@@ -15,6 +15,128 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+  /v1/data-sources:
+    get:
+      operationId: listDataSources
+      summary: List categorized upstream data-source health and check schedule
+      responses:
+        '200':
+          description: Current upstream health grouped by source and instrument category.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSourceListResponse'
+  /v1/data-sources/check:
+    post:
+      operationId: checkDataSources
+      summary: Run immediate checks for all source and category combinations
+      responses:
+        '200':
+          description: Provider health state after the checks complete.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSourceListResponse'
+  /v1/data-sources/schedule:
+    put:
+      operationId: updateDataSourceSchedule
+      summary: Enable, disable, or update scheduled upstream health checks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                enabled:
+                  type: boolean
+                  default: true
+                interval_seconds:
+                  type: integer
+                  minimum: 5
+                  maximum: 86400
+      responses:
+        '200':
+          description: Updated health-check schedule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSourceListResponse'
+        default:
+          description: Invalid schedule configuration.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data-sync:
+    get:
+      operationId: getDataSyncStatus
+      summary: Get local historical warehouse and synchronization status
+      responses:
+        '200':
+          description: Current storage summary and active or latest run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSyncStatusResponse'
+  /v1/data-sync/runs:
+    post:
+      operationId: startDataSyncRun
+      summary: Start a background daily-bar synchronization run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataSyncRequest'
+      responses:
+        '202':
+          description: Synchronization run accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSyncRunResponse'
+        default:
+          description: Invalid request or another run is active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data-sync/cancel:
+    post:
+      operationId: cancelDataSyncRun
+      summary: Request cancellation of the active synchronization run
+      responses:
+        '202':
+          description: Cancellation requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSyncRunResponse'
+        default:
+          description: No synchronization run is active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data-sync/resume:
+    post:
+      operationId: resumeDataSyncRun
+      summary: Resume the latest interrupted synchronization run
+      responses:
+        '202':
+          description: Synchronization run resumed from its saved progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSyncRunResponse'
+        default:
+          description: No resumable run exists, the catalog changed, or another run is active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/instruments:
     get:
       operationId: listInstruments
@@ -258,6 +380,181 @@ components:
             uptime_seconds:
               type: integer
               minimum: 0
+    DataSourceHealth:
+      type: object
+      additionalProperties: false
+      required:
+        - provider_id
+        - source_id
+        - source_name
+        - category
+        - status
+        - capabilities
+        - last_checked_at
+        - last_success_at
+        - latency_ms
+        - records_checked
+        - error
+      properties:
+        provider_id:
+          type: string
+        source_id:
+          type: string
+        source_name:
+          type: string
+        category:
+          type: string
+          enum: [equity, index]
+        status:
+          type: string
+          enum: [unknown, checking, healthy, unhealthy]
+        capabilities:
+          type: array
+          items:
+            type: string
+        last_checked_at:
+          type: [string, 'null']
+          format: date-time
+        last_success_at:
+          type: [string, 'null']
+          format: date-time
+        latency_ms:
+          type: [integer, 'null']
+          minimum: 0
+        records_checked:
+          type: [integer, 'null']
+          minimum: 0
+        error:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [code, message]
+              properties:
+                code:
+                  type: string
+                message:
+                  type: string
+    DataSourceSchedule:
+      type: object
+      additionalProperties: false
+      required: [enabled, interval_seconds, next_check_at]
+      properties:
+        enabled:
+          type: boolean
+        interval_seconds:
+          type: number
+          minimum: 0
+        next_check_at:
+          type: [string, 'null']
+          format: date-time
+    DataSourceListResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, schedule, generated_at]
+      properties:
+        schema:
+          const: market.data-source-list.v1
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataSourceHealth'
+        schedule:
+          $ref: '#/components/schemas/DataSourceSchedule'
+        generated_at:
+          type: string
+          format: date-time
+    DataSyncRequest:
+      type: object
+      additionalProperties: false
+      required: [instrument_types, start, end]
+      properties:
+        instrument_types:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [equity, index]
+        start:
+          type: string
+          format: date
+        end:
+          type: string
+          format: date
+        adjustment:
+          $ref: '#/components/schemas/PriceAdjustment'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 20000
+        delay_ms:
+          type: integer
+          minimum: 0
+          maximum: 10000
+    DataSyncRun:
+      type: object
+      additionalProperties: true
+      required: [run_id, status, total, completed, succeeded, failed, bars_written]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [running, completed, completed_with_errors, cancelled, failed]
+        total:
+          type: integer
+          minimum: 0
+        completed:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        bars_written:
+          type: integer
+          minimum: 0
+    DataSyncRunResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data]
+      properties:
+        schema:
+          const: market.data-sync-run.v1
+        data:
+          $ref: '#/components/schemas/DataSyncRun'
+    DataSyncStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data, generated_at]
+      properties:
+        schema:
+          const: market.data-sync-status.v1
+        data:
+          type: object
+          additionalProperties: true
+          required: [database_path, storage, active_run, last_run]
+          properties:
+            database_path:
+              type: string
+            storage:
+              type: object
+              additionalProperties: true
+            active_run:
+              oneOf:
+                - type: 'null'
+                - $ref: '#/components/schemas/DataSyncRun'
+            last_run:
+              oneOf:
+                - type: 'null'
+                - $ref: '#/components/schemas/DataSyncRun'
+        generated_at:
+          type: string
+          format: date-time
     InstrumentCapability:
       type: string
       enum: [quote, bars, constituents]

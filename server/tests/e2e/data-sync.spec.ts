@@ -1,0 +1,238 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  createMarketServer,
+  type InstrumentProvider,
+} from '@market-cli/server'
+
+async function waitForRun(url: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await fetch(`${url}/v1/data-sync`)
+    const body = await response.json() as {
+      data: {
+        active_run: unknown
+        last_run: { status: string; succeeded: number; bars_written: number } | null
+        storage: { instruments: number; daily_bars: number }
+      }
+    }
+    if (!body.data.active_run && body.data.last_run) return body.data
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('data sync run did not finish')
+}
+
+describe('local historical data synchronization', () => {
+  it('stores daily bars and re-fetches a ten-day overlap on incremental runs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'market-data-sync-'))
+    const starts: string[] = []
+    const provider: InstrumentProvider = {
+      id: 'sync-fixture',
+      async listInstruments() {
+        return [{
+          type: 'equity',
+          market: 'CN',
+          name: '浦发银行',
+          symbol: '600000',
+          providerSymbol: 'sh600000',
+          venue: 'XSHG',
+          currency: 'CNY',
+          status: 'active',
+          capabilities: ['bars'],
+        }]
+      },
+      async getBars(call) {
+        starts.push(call.start ?? '')
+        return [{
+          source: 'sina',
+          interval: '1d',
+          tradingDate: '2026-01-12',
+          periodStart: '2026-01-12T00:00:00+08:00',
+          periodEnd: '2026-01-12T23:59:59+08:00',
+          currency: 'CNY',
+          open: '10.10',
+          high: '10.50',
+          low: '10.00',
+          close: '10.40',
+          volume: 1_000_000,
+          turnover: '10300000.00',
+          adjustment: call.adjustment,
+          complete: true,
+        }]
+      },
+    }
+    const server = await createMarketServer({
+      historyPath: join(directory, 'history.duckdb'),
+      healthCheckIntervalMs: 0,
+    })
+    await server.mountProvider(provider)
+
+    try {
+      for (let run = 0; run < 2; run += 1) {
+        const response = await fetch(`${server.url}/v1/data-sync/runs`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            instrument_types: ['equity'],
+            start: '2025-01-01',
+            end: '2026-01-31',
+            adjustment: 'none',
+          }),
+        })
+        expect(response.status).toBe(202)
+        const status = await waitForRun(server.url)
+        expect(status.last_run).toMatchObject({
+          status: 'completed',
+          succeeded: 1,
+          bars_written: 1,
+        })
+        expect(status.storage).toMatchObject({ instruments: 1, daily_bars: 1 })
+      }
+      expect(starts).toEqual(['2025-01-01', '2026-01-02'])
+
+      const localBars = await fetch(
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/bars?interval=1d&start=2025-01-01&end=2026-01-31`,
+      )
+      expect(localBars.status).toBe(200)
+      expect(await localBars.json()).toMatchObject({
+        data: [{ trading_date: '2026-01-12', close: '10.4' }],
+        meta: { sources: [{ provider: 'local-duckdb', upstream: 'local' }] },
+      })
+      const localQuote = await fetch(
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/quote`,
+      )
+      expect(localQuote.status).toBe(200)
+      expect(await localQuote.json()).toMatchObject({
+        data: { last: '10.4' },
+        meta: { sources: [{ provider: 'local-duckdb', upstream: 'local' }] },
+      })
+      expect(starts).toHaveLength(2)
+
+      const remoteBars = await fetch(
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/bars?interval=1d&start=2026-02-01&end=2026-02-01`,
+      )
+      expect(remoteBars.status).toBe(200)
+      expect(await remoteBars.json()).toMatchObject({
+        meta: { sources: [{ provider: 'sync-fixture', upstream: 'sina' }] },
+      })
+      expect(starts.at(-1)).toBe('2026-02-01')
+
+      const backfill = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['equity'],
+          start: '1990-01-01',
+          end: '2026-01-31',
+          adjustment: 'none',
+        }),
+      })
+      expect(backfill.status).toBe(202)
+      await waitForRun(server.url)
+      expect(starts.at(-1)).toBe('1990-01-01')
+    } finally {
+      await server.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('serves the synchronization management page', async () => {
+    const server = await createMarketServer({ healthCheckIntervalMs: 0 })
+    try {
+      const response = await fetch(`${server.url}/admin/data-sync`)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toContain('text/html')
+      const page = await response.text()
+      expect(page).toContain('历史数据同步')
+      expect(page).toContain('aria-label="管理目录"')
+      expect(page).toContain('href="/admin/data-sources"')
+      expect(page).toContain('class="active" aria-current="page" href="/admin/data-sync"')
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('resumes an interrupted run without fetching completed instruments again', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'market-data-resume-'))
+    const requestedSymbols: string[] = []
+    const provider: InstrumentProvider = {
+      id: 'resume-fixture',
+      async listInstruments() {
+        return ['600000', '600001'].map((symbol) => ({
+          type: 'equity' as const,
+          market: 'CN' as const,
+          name: `股票${symbol}`,
+          symbol,
+          providerSymbol: `sh${symbol}`,
+          venue: 'XSHG',
+          currency: 'CNY',
+          status: 'active' as const,
+          capabilities: ['bars' as const],
+        }))
+      },
+      async getBars(call) {
+        requestedSymbols.push(call.providerSymbol)
+        return [{
+          source: 'sina',
+          interval: '1d',
+          tradingDate: '2026-01-12',
+          periodStart: '2026-01-12T00:00:00+08:00',
+          periodEnd: '2026-01-12T23:59:59+08:00',
+          currency: 'CNY',
+          open: '10',
+          high: '11',
+          low: '9',
+          close: '10.5',
+          volume: 100,
+          turnover: '1000',
+          adjustment: call.adjustment,
+          complete: true,
+        }]
+      },
+    }
+    const server = await createMarketServer({
+      historyPath: join(directory, 'history.duckdb'),
+      healthCheckIntervalMs: 0,
+    })
+    await server.mountProvider(provider)
+
+    try {
+      const started = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['equity'],
+          start: '2026-01-01',
+          end: '2026-01-31',
+          adjustment: 'none',
+          delay_ms: 500,
+        }),
+      })
+      expect(started.status).toBe(202)
+
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const status = await fetch(`${server.url}/v1/data-sync`).then((response) => response.json()) as {
+          data: { active_run: { completed: number } | null }
+        }
+        if (status.data.active_run?.completed === 1) break
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      const cancelled = await fetch(`${server.url}/v1/data-sync/cancel`, { method: 'POST' })
+      expect(cancelled.status).toBe(202)
+      const interrupted = await waitForRun(server.url)
+      expect(interrupted.last_run).toMatchObject({ status: 'cancelled', succeeded: 1 })
+
+      const resumed = await fetch(`${server.url}/v1/data-sync/resume`, { method: 'POST' })
+      expect(resumed.status).toBe(202)
+      const completed = await waitForRun(server.url)
+      expect(completed.last_run).toMatchObject({ status: 'completed', succeeded: 2 })
+      expect(requestedSymbols).toEqual(['sh600000', 'sh600001'])
+    } finally {
+      await server.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})

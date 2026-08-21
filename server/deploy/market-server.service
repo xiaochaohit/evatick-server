@@ -1,0 +1,33 @@
+[Unit]
+Description=Market Server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=market-server
+Group=market-server
+WorkingDirectory=/opt/market-cli/server
+Environment=HOME=/var/lib/market-server
+Environment=PATH=/opt/node-v22.19.0/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=MARKET_SERVER_HOST=0.0.0.0
+Environment=MARKET_SERVER_PORT=8765
+Environment=MARKET_SERVER_CATALOG_PATH=/var/lib/market-server/catalog.sqlite
+Environment=MARKET_SERVER_HISTORY_PATH=/var/lib/market-server/market-history.duckdb
+Environment=MARKET_SERVER_AKSHARE_PYTHON=/opt/market-cli/server/providers/akshare-python/.venv/bin/python
+Environment=MARKET_SERVER_HEALTH_CHECK_INTERVAL_SECONDS=60
+Environment=MARKET_SERVER_HEALTH_CHECK_TIMEOUT_MS=30000
+ExecStart=/opt/node-v22.19.0/bin/pnpm --filter @market-cli/server start
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/market-server
+
+[Install]
+WantedBy=multi-user.target

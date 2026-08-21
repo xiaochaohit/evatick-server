@@ -50,11 +50,25 @@ pnpm start
 
 ### Data source priority
 
-The AKShare bridge keeps an ordered source list for each market-data type in
-`providers/akshare-python/market_server_akshare/sources.py`. It uses the first
-working source and falls through the list on failure. Equity and index bars and
-quotes can therefore use different priorities. Successful quote and bars HTTP
-responses expose the selected source as `meta.sources[].upstream`.
+For daily bars and end-of-day quotes, Market Server checks the local DuckDB
+warehouse first. A local hit requires the requested date range to be inside the
+recorded synchronization coverage; otherwise routing continues to the remote
+provider sources below. Successful remote daily-bar responses with explicit
+start and end dates are written back to DuckDB, so the same range is local on
+subsequent requests. Minute bars always use remote sources.
+
+The process-isolated Python bridge keeps an ordered source list for each
+market-data type in `providers/akshare-python/market_server_akshare/sources.py`.
+It uses AKShare interfaces for Sina, East Money, and Tencent, and the official
+BaoStock client for BaoStock. The first working source wins and failures fall
+through to the next source. Equity and index bars and quotes can therefore use
+different priorities. Successful quote and bars HTTP responses expose the
+selected source as `meta.sources[].upstream`.
+
+Daily equity fallback order is Sina, East Money, Tencent, then BaoStock. Daily
+index fallback order is Sina, Tencent, East Money, then BaoStock. Intraday data
+remains limited to Sina and East Money because Tencent and BaoStock do not
+provide the required minute-bar contract here.
 
 Configuration uses environment variables:
 
@@ -63,9 +77,12 @@ Configuration uses environment variables:
 | `MARKET_SERVER_HOST` | `127.0.0.1` | Listen host |
 | `MARKET_SERVER_PORT` | `8765` | Listen port; use `0` for an ephemeral port |
 | `MARKET_SERVER_CATALOG_PATH` | user data directory | SQLite catalog snapshot |
+| `MARKET_SERVER_HISTORY_PATH` | user data directory | DuckDB daily-bar warehouse |
 | `MARKET_SERVER_AKSHARE_PYTHON` | bundled provider venv, then `python3` | Python with `market-server-akshare` installed |
 | `MARKET_SERVER_RETRY_ATTEMPTS` | `2` | Attempts per provider |
 | `MARKET_SERVER_REQUEST_TIMEOUT_MS` | `30000` | Per-provider deadline |
+| `MARKET_SERVER_HEALTH_CHECK_INTERVAL_SECONDS` | `60` | Provider health-check interval; use `0` to disable |
+| `MARKET_SERVER_HEALTH_CHECK_TIMEOUT_MS` | `10000` | Deadline for one provider health check |
 
 Keep the default loopback host unless a trusted reverse proxy supplies network
 authentication and TLS. The v1 process does not implement public-internet
@@ -78,6 +95,13 @@ The source of truth is
 The implemented routes are:
 
 - `GET /v1/health`
+- `GET /v1/data-sources`
+- `POST /v1/data-sources/check`
+- `PUT /v1/data-sources/schedule`
+- `GET /v1/data-sync`
+- `POST /v1/data-sync/runs`
+- `POST /v1/data-sync/resume`
+- `POST /v1/data-sync/cancel`
 - `GET /v1/instruments`
 - `GET /v1/instruments/{instrument_id}`
 - `GET /v1/instrument-search`
@@ -86,11 +110,24 @@ The implemented routes are:
 - `GET /v1/instruments/{instrument_id}/bars`
 - `GET /v1/indices/{instrument_id}/constituents`
 
+The local data-source management console is available at
+`/admin/data-sources`. It independently checks each upstream, such as Sina,
+East Money, and Tencent, by equity and index category. The page displays
+status, latency, capabilities, and supports manual or scheduled checks.
+
 Successful responses carry a versioned `schema`, normalized `data`, and source
 metadata. List responses also carry a cursor page. Failures use
 `application/problem+json`. When a provider catalog refresh fails, the latest
 SQLite snapshot is returned with `meta.partial: true`, `stale: true`, and a
 warning instead of silently presenting stale data as current.
+
+The separate local synchronization console is available at `/admin/data-sync`.
+It starts one background job at a time, stores normalized daily bars in DuckDB,
+and reports progress, failures, coverage, and warehouse size. Re-running a sync
+uses an overlap from ten days before the latest stored bar so upstream fixes are
+applied without duplicating the `(instrument, date, adjustment)` primary key.
+The optional per-instrument delay keeps bulk synchronization single-threaded and
+rate-limited for free upstream sources.
 
 ## Provider plugin contract
 
@@ -113,3 +150,11 @@ pnpm typecheck
 cd ..
 .venv/bin/python -m pytest
 ```
+
+## systemd deployment
+
+The example unit in `deploy/market-server.service` runs the server as a
+restricted `market-server` user from `/opt/market-cli/server`, persists the
+catalog under `/var/lib/market-server`, and listens on `0.0.0.0:8765`.
+Restrict public access with the cloud security group or place an authenticated
+TLS reverse proxy in front of the service.

@@ -7,7 +7,7 @@ name = "market-server-akshare"
 version = "0.1.0"
 description = "Process-isolated AKShare provider bridge for Market Server"
 requires-python = ">=3.11"
-dependencies = ["akshare==1.18.82"]
+dependencies = ["akshare==1.18.82", "baostock==0.9.3"]
 
 [tool.setuptools.packages.find]
 include = ["market_server_akshare*"]

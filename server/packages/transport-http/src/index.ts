@@ -22,6 +22,11 @@ import type {
   MarketProviderRegistry,
 } from '@market-cli/cordis-runtime'
 
+import { dataSourceDashboardHtml } from './data-source-dashboard.js'
+import { DataSyncManager } from './data-sync-manager.js'
+import { dataSyncDashboardHtml } from './data-sync-dashboard.js'
+import { ProviderHealthMonitor } from './provider-health.js'
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     marketHttp: MarketHttpService
@@ -64,6 +69,8 @@ export class MarketHttpService extends Service {
   static inject = ['marketProviderRegistry', 'marketCatalogStore']
 
   private readonly app: FastifyInstance
+  private readonly healthMonitor: ProviderHealthMonitor
+  private readonly dataSyncManager: DataSyncManager
   private address: string | undefined
 
   constructor(
@@ -71,6 +78,9 @@ export class MarketHttpService extends Service {
     private readonly config: {
       retryAttempts?: number
       requestTimeoutMs?: number
+      healthCheckIntervalMs?: number
+      healthCheckTimeoutMs?: number
+      historyPath?: string
     } = {},
   ) {
     super(ctx, 'marketHttp')
@@ -114,6 +124,11 @@ export class MarketHttpService extends Service {
       retryAttempts: Math.max(this.config.retryAttempts ?? 2, 1),
       timeoutMs: Math.max(this.config.requestTimeoutMs ?? 10_000, 1),
     }
+    this.healthMonitor = new ProviderHealthMonitor(
+      () => ctx.marketProviderRegistry.list(),
+      Math.max(this.config.healthCheckIntervalMs ?? 60_000, 0),
+      Math.max(this.config.healthCheckTimeoutMs ?? routingOptions.timeoutMs, 1),
+    )
 
     const loadCatalog = async () => {
       const providers = ctx.marketProviderRegistry.list()
@@ -217,6 +232,204 @@ export class MarketHttpService extends Service {
         retryable: error.retryable,
         request_id: `req_${randomUUID()}`,
       })
+
+    this.dataSyncManager = new DataSyncManager({
+      databasePath: this.config.historyPath ?? ':memory:',
+      loadInstruments: async () => (await loadCatalog()).instruments,
+      loadBars: async (instrument, request) => {
+        const result = await routeInstrumentData({
+          providers: ctx.marketProviderRegistry.list(),
+          instrument,
+          capability: 'bars',
+          ...routingOptions,
+          supports: (provider) => typeof provider.getBars === 'function',
+          invoke: (provider, providerSymbol, signal) => provider.getBars?.({
+            providerSymbol,
+            signal,
+            interval: '1d',
+            start: request.start,
+            end: request.end,
+            adjustment: request.adjustment,
+          }),
+        })
+        return {
+          provider: result.provider,
+          upstream: result.value[0]?.source,
+          bars: result.value,
+        }
+      },
+    })
+
+    const dataSourcesResponse = async () => ({
+      schema: 'market.data-source-list.v1',
+      data: [
+        ...await this.dataSyncManager.localDataSources(),
+        ...this.healthMonitor.list(),
+      ],
+      schedule: this.healthMonitor.schedule,
+      generated_at: new Date().toISOString(),
+    })
+
+    this.app.get('/admin/data-sources', async (_request, reply) => reply
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(dataSourceDashboardHtml))
+
+    this.app.get('/admin/data-sync', async (_request, reply) => reply
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(dataSyncDashboardHtml))
+
+    this.app.get('/v1/data-sync', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return {
+        schema: 'market.data-sync-status.v1',
+        data: await this.dataSyncManager.status(),
+        generated_at: new Date().toISOString(),
+      }
+    })
+
+    this.app.post<{
+      Body: {
+        instrument_types?: InstrumentType[]
+        start?: string
+        end?: string
+        adjustment?: PriceAdjustment
+        limit?: number
+        delay_ms?: number
+      }
+    }>('/v1/data-sync/runs', async (request, reply) => {
+      const instrumentTypes = request.body?.instrument_types
+      const start = request.body?.start
+      const end = request.body?.end
+      const adjustment = request.body?.adjustment ?? 'none'
+      const limit = request.body?.limit
+      const delayMs = request.body?.delay_ms ?? 0
+      if (
+        !Array.isArray(instrumentTypes) ||
+        instrumentTypes.some((value) => value !== 'equity' && value !== 'index') ||
+        typeof start !== 'string' ||
+        typeof end !== 'string' ||
+        !['none', 'forward', 'backward'].includes(adjustment) ||
+        (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20_000)) ||
+        !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 10_000
+      ) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/invalid-data-sync-request',
+          title: 'Invalid data sync request',
+          status: 400,
+          code: 'INVALID_DATA_SYNC_REQUEST',
+          detail: 'instrument_types, start, end, adjustment, or limit is invalid.',
+          retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      try {
+        const run = await this.dataSyncManager.start({
+          instrumentTypes,
+          start,
+          end,
+          adjustment,
+          ...(limit === undefined ? {} : { limit }),
+          delayMs,
+        })
+        return reply.code(202).send({
+          schema: 'market.data-sync-run.v1',
+          data: run,
+        })
+      } catch (error) {
+        const code = error instanceof Error ? error.message : 'DATA_SYNC_START_FAILED'
+        const conflict = code === 'DATA_SYNC_ALREADY_RUNNING'
+        return reply.code(conflict ? 409 : 400).type('application/problem+json').send({
+          type: `https://market-cli.dev/problems/${code.toLowerCase().replaceAll('_', '-')}`,
+          title: conflict ? 'Data sync already running' : 'Data sync could not start',
+          status: conflict ? 409 : 400,
+          code,
+          detail: conflict ? 'Only one data sync run can execute at a time.' : 'The data sync request is invalid.',
+          retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+    })
+
+    this.app.post('/v1/data-sync/cancel', async (_request, reply) => {
+      const run = this.dataSyncManager.cancel()
+      if (!run) {
+        return reply.code(409).type('application/problem+json').send({
+          type: 'https://market-cli.dev/problems/data-sync-not-running',
+          title: 'Data sync is not running',
+          status: 409,
+          code: 'DATA_SYNC_NOT_RUNNING',
+          detail: 'There is no active data sync run to cancel.',
+          retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      return reply.code(202).send({ schema: 'market.data-sync-run.v1', data: run })
+    })
+
+    this.app.post('/v1/data-sync/resume', async (_request, reply) => {
+      try {
+        const run = await this.dataSyncManager.resume()
+        return reply.code(202).send({ schema: 'market.data-sync-run.v1', data: run })
+      } catch (error) {
+        const code = error instanceof Error ? error.message : 'DATA_SYNC_RESUME_FAILED'
+        const detail = code === 'DATA_SYNC_ALREADY_RUNNING'
+          ? 'Only one data sync run can execute at a time.'
+          : code === 'DATA_SYNC_CATALOG_CHANGED'
+            ? 'The instrument catalog changed since the previous run; start a new sync instead.'
+            : 'There is no interrupted data sync run to resume.'
+        return reply.code(409).type('application/problem+json').send({
+          type: `https://market-cli.dev/problems/${code.toLowerCase().replaceAll('_', '-')}`,
+          title: 'Data sync could not resume',
+          status: 409,
+          code,
+          detail,
+          retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+    })
+
+    this.app.get('/v1/data-sources', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return await dataSourcesResponse()
+    })
+
+    this.app.post('/v1/data-sources/check', async (_request, reply) => {
+      await this.healthMonitor.checkAll()
+      reply.header('cache-control', 'no-store')
+      return await dataSourcesResponse()
+    })
+
+    this.app.put<{
+      Body: { enabled?: boolean; interval_seconds?: number }
+    }>('/v1/data-sources/schedule', async (request, reply) => {
+      const enabled = request.body?.enabled ?? true
+      if (!enabled) {
+        this.healthMonitor.setIntervalMs(0)
+      } else {
+        const intervalSeconds = request.body?.interval_seconds
+        if (
+          !Number.isInteger(intervalSeconds) ||
+          (intervalSeconds ?? 0) < 5 ||
+          (intervalSeconds ?? 0) > 86_400
+        ) {
+          return reply.code(400).type('application/problem+json').send({
+            type: 'https://market-cli.dev/problems/invalid-health-check-interval',
+            title: 'Invalid health check interval',
+            status: 400,
+            code: 'INVALID_HEALTH_CHECK_INTERVAL',
+            detail: 'interval_seconds must be an integer between 5 and 86400.',
+            retryable: false,
+            request_id: `req_${randomUUID()}`,
+          })
+        }
+        this.healthMonitor.setIntervalMs(intervalSeconds! * 1_000)
+      }
+      reply.header('cache-control', 'no-store')
+      return await dataSourcesResponse()
+    })
 
     this.app.get('/v1/health', async () => {
       const providers = ctx.marketProviderRegistry.list().length
@@ -452,6 +665,36 @@ export class MarketHttpService extends Service {
           request_id: `req_${randomUUID()}`,
         })
       }
+      const localQuote = await this.dataSyncManager.readQuote(instrument.instrumentId)
+      if (localQuote) {
+        const observedAt = new Date().toISOString()
+        return {
+          schema: 'market.quote.v1',
+          data: {
+            instrument_id: instrument.instrumentId,
+            symbol: instrument.symbol,
+            name: instrument.name,
+            venue: instrument.venue ?? null,
+            publisher: instrument.publisher ?? null,
+            currency: localQuote.currency,
+            market_time: localQuote.marketTime,
+            observed_at: observedAt,
+            market_status: 'closed',
+            last: localQuote.last,
+            open: localQuote.open,
+            high: localQuote.high,
+            low: localQuote.low,
+            previous_close: localQuote.previousClose,
+            volume: localQuote.volume,
+            turnover: localQuote.turnover,
+          },
+          meta: meta([{
+            provider: 'local-duckdb',
+            upstream: 'local',
+            fetched_at: observedAt,
+          }]),
+        }
+      }
       try {
         const result = await routeInstrumentData({
           providers: ctx.marketProviderRegistry.list(),
@@ -525,6 +768,42 @@ export class MarketHttpService extends Service {
       }
       const interval = request.query.interval ?? '1d'
       const adjustment = request.query.adjustment ?? 'none'
+      if (interval === '1d') {
+        const localBars = await this.dataSyncManager.readBars({
+          instrumentId: instrument.instrumentId,
+          adjustment,
+          start: request.query.start,
+          end: request.query.end,
+        })
+        if (localBars) {
+          const fetchedAt = new Date().toISOString()
+          return {
+            schema: 'market.bar-list.v1',
+            data: localBars.map((bar) => ({
+              instrument_id: instrument.instrumentId,
+              interval: bar.interval,
+              trading_date: bar.tradingDate,
+              period_start: bar.periodStart,
+              period_end: bar.periodEnd,
+              currency: bar.currency,
+              open: bar.open,
+              high: bar.high,
+              low: bar.low,
+              close: bar.close,
+              volume: bar.volume,
+              turnover: bar.turnover,
+              adjustment: bar.adjustment,
+              complete: bar.complete,
+            })),
+            page: { next_cursor: null },
+            meta: meta([{
+              provider: 'local-duckdb',
+              upstream: 'local',
+              fetched_at: fetchedAt,
+            }]),
+          }
+        }
+      }
       try {
         const result = await routeInstrumentData({
           providers: ctx.marketProviderRegistry.list(),
@@ -542,6 +821,22 @@ export class MarketHttpService extends Service {
               adjustment,
             }),
         })
+        const cacheWarnings: string[] = []
+        if (interval === '1d') {
+          try {
+            await this.dataSyncManager.storeBars(instrument, {
+              provider: result.provider,
+              upstream: result.value[0]?.source,
+              bars: result.value,
+            }, {
+              start: request.query.start,
+              end: request.query.end,
+              adjustment,
+            })
+          } catch {
+            cacheWarnings.push('local DuckDB cache write failed')
+          }
+        }
         return {
           schema: 'market.bar-list.v1',
           data: [...result.value]
@@ -569,7 +864,7 @@ export class MarketHttpService extends Service {
               fetched_at: result.observedAt,
               ...(result.value[0]?.source ? { upstream: result.value[0].source } : {}),
             },
-          ]),
+          ], false, cacheWarnings),
         }
       } catch (error) {
         if (error instanceof ProviderRoutingError) {
@@ -676,6 +971,8 @@ export class MarketHttpService extends Service {
   }
 
   async close(): Promise<void> {
+    this.healthMonitor.close()
+    await this.dataSyncManager.close()
     if (!this.address) return
     this.address = undefined
     await this.app.close()
