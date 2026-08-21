@@ -5,7 +5,7 @@ export const dataSyncDashboardHtml = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>历史数据同步 · EVA Tick Server</title>
+  <title>历史数据同步 · EVA</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
     :root { --ink:#e7f1ed; --muted:#82968f; --paper:#07110f; --card:rgba(13,27,23,.88); --line:rgba(151,199,183,.13); --green:#59d6ad; --mint:rgba(44,150,114,.18); --red:#ee806c; --amber:#e5b65e; --shadow:0 24px 60px rgba(0,0,0,.22); }

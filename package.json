@@ -2,12 +2,16 @@
   "name": "@evatick/server-workspace",
   "private": true,
   "type": "module",
+  "bin": {
+    "evatickd": "./bin/evatickd"
+  },
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "start": "pnpm --filter @evatick/server start",
+    "start": "./bin/evatickd",
+    "evatickd": "./bin/evatickd",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

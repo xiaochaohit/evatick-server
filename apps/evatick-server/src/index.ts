@@ -11,15 +11,15 @@ import {
   mountInstrumentProvider,
   type MountedProvider,
 } from '@evatick/cordis-runtime'
-import { MarketHttpService } from '@evatick/transport-http'
+import { EvaHttpService } from '@evatick/transport-http'
 
-export interface MarketServer {
+export interface EvaTickServer {
   readonly url: string
   mountProvider(provider: InstrumentProvider): Promise<MountedProvider>
   close(): Promise<void>
 }
 
-export interface MarketServerOptions {
+export interface EvaTickServerOptions {
   retryAttempts?: number
   requestTimeoutMs?: number
   healthCheckIntervalMs?: number
@@ -34,9 +34,9 @@ export interface MarketServerOptions {
   port?: number
 }
 
-export async function createMarketServer(
-  options: MarketServerOptions = {},
-): Promise<MarketServer> {
+export async function createEvaTickServer(
+  options: EvaTickServerOptions = {},
+): Promise<EvaTickServer> {
   const ctx = new Context()
   const registryFiber: Fiber = ctx.plugin(MarketProviderRegistry)
   await registryFiber.await()
@@ -45,9 +45,9 @@ export async function createMarketServer(
     : new MemoryCatalogSnapshotStore()
   const storeFiber: Fiber = ctx.plugin(MarketCatalogStore, catalogStore)
   await storeFiber.await()
-  const httpFiber: Fiber = ctx.plugin(MarketHttpService, options)
+  const httpFiber: Fiber = ctx.plugin(EvaHttpService, options)
   await httpFiber.await()
-  const url = await ctx.marketHttp.listen(options.host, options.port)
+  const url = await ctx.evaHttp.listen(options.host, options.port)
   const mountedProviders = new Set<MountedProvider>()
 
   return {

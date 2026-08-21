@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "evatick-server-akshare"
 version = "0.1.0"
-description = "Process-isolated AKShare provider bridge for EVA Tick Server"
+description = "Process-isolated market data provider bridge for EVA"
 requires-python = ">=3.11"
 dependencies = ["akshare==1.18.82", "baostock==0.9.3"]
 

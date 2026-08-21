@@ -2,7 +2,7 @@ import { adminNavigation, adminNavigationStyles } from './admin-navigation.js'
 
 export const apiKeyDashboardHtml = String.raw`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>API 密钥 · Market Console</title><style>
+<title>API 密钥 · EVA</title><style>
   *{box-sizing:border-box}body{margin:0;color:#dceae5;background:#07110f;font-family:"Noto Sans SC",system-ui,sans-serif}${adminNavigationStyles}
   main{width:min(1000px,calc(100% - 40px));margin:48px auto}.eyebrow{color:#59d6ad;font:600 11px monospace;letter-spacing:.12em}h1{margin:8px 0;font-size:32px}.lead{color:#82968f;margin:0 0 30px}
   .panel{padding:24px;border:1px solid #1d342d;border-radius:14px;background:#0b1916;margin-bottom:20px}.create{display:flex;gap:12px}input{flex:1;padding:12px 14px;border:1px solid #29473d;border-radius:9px;color:#eef8f4;background:#081310;font:inherit}button{padding:11px 16px;border:0;border-radius:9px;color:#061410;background:#59d6ad;font-weight:700;cursor:pointer}.secondary{padding:7px 10px;color:#a8c5bb;background:#142923}.danger{padding:7px 10px;color:#ff968b;background:#2b1716}.actions{display:flex;gap:7px;justify-content:flex-end;white-space:nowrap}

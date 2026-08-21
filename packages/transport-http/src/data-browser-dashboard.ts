@@ -5,7 +5,7 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>数据浏览 · EVA Tick Server</title>
+  <title>数据浏览 · EVA</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
     :root { --ink:#e7f1ed; --muted:#82968f; --paper:#07110f; --card:rgba(13,27,23,.9); --line:rgba(151,199,183,.13); --green:#59d6ad; --red:#ee806c; --shadow:0 24px 60px rgba(0,0,0,.22); }
@@ -68,7 +68,7 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
   ${adminNavigation('home')}
   <main class="shell">
     <header>
-      <div><div class="eyebrow">LOCAL MARKET WAREHOUSE</div><h1>数据浏览</h1><p class="subtitle">搜索本地 DuckDB 中已落库的股票与指数，检查日线覆盖范围、记录数量和最近行情。</p></div>
+      <div><div class="eyebrow">EVA LOCAL WAREHOUSE</div><h1>数据浏览</h1><p class="subtitle">搜索本地 DuckDB 中已落库的股票与指数，检查日线覆盖范围、记录数量和最近行情。</p></div>
       <div class="warehouse" id="warehouse">正在连接本地仓库</div>
     </header>
     <section class="panel">

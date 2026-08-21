@@ -32,7 +32,7 @@ import { ProviderHealthMonitor } from './provider-health.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    marketHttp: MarketHttpService
+    evaHttp: EvaHttpService
     marketProviderRegistry: MarketProviderRegistry
     marketCatalogStore: MarketCatalogStore
   }
@@ -68,7 +68,7 @@ function toInstrumentRecord(instrument: CatalogInstrument): InstrumentRecord {
   }
 }
 
-export class MarketHttpService extends Service {
+export class EvaHttpService extends Service {
   static inject = ['marketProviderRegistry', 'marketCatalogStore']
 
   private readonly app: FastifyInstance
@@ -92,14 +92,14 @@ export class MarketHttpService extends Service {
       apiKeysPath?: string
     } = {},
   ) {
-    super(ctx, 'marketHttp')
+    super(ctx, 'evaHttp')
     this.app = Fastify({ logger: false })
 
     this.app.setNotFoundHandler((_request, reply) => reply
       .code(404)
       .type('application/problem+json')
       .send({
-        type: 'https://market-cli.dev/problems/route-not-found',
+        type: 'urn:eva:problem:route-not-found',
         title: 'Route not found',
         status: 404,
         code: 'ROUTE_NOT_FOUND',
@@ -114,13 +114,13 @@ export class MarketHttpService extends Service {
         ? normalized.statusCode
         : 500
       if (status === 500) {
-        process.stderr.write(`[market-http] ${normalized.stack ?? normalized.message ?? String(error)}\n`)
+        process.stderr.write(`[eva-http] ${normalized.stack ?? normalized.message ?? String(error)}\n`)
       }
       return reply
         .code(status)
         .type('application/problem+json')
         .send({
-          type: `https://market-cli.dev/problems/${status === 500 ? 'internal-error' : 'invalid-request'}`,
+          type: `urn:eva:problem:${status === 500 ? 'internal-error' : 'invalid-request'}`,
           title: status === 500 ? 'Internal server error' : 'Invalid request',
           status,
           code: status === 500 ? 'INTERNAL_ERROR' : 'INVALID_REQUEST',
@@ -243,7 +243,7 @@ export class MarketHttpService extends Service {
       error: ProviderRoutingError,
     ) =>
       reply.code(error.retryable ? 503 : 422).type('application/problem+json').send({
-        type: `https://market-cli.dev/problems/${error.code.toLowerCase().replaceAll('_', '-')}`,
+        type: `urn:eva:problem:${error.code.toLowerCase().replaceAll('_', '-')}`,
         title: error.code === 'CAPABILITY_UNAVAILABLE'
           ? 'Capability unavailable'
           : 'Provider request failed',
@@ -282,7 +282,7 @@ export class MarketHttpService extends Service {
     })
 
     const dataSourcesResponse = async () => ({
-      schema: 'market.data-source-list.v1',
+      schema: 'eva.data-source-list.v1',
       data: [
         ...await this.dataSyncManager.localDataSources(),
         ...this.healthMonitor.list(),
@@ -311,17 +311,17 @@ export class MarketHttpService extends Service {
       .send(apiKeyDashboardHtml))
 
     this.app.get('/v1/api-keys', async () => ({
-      schema: 'market.api-key-list.v1',
+      schema: 'eva.api-key-list.v1',
       data: this.apiKeyAuth.list(),
     }))
 
     this.app.post<{ Body: { name?: string } }>('/v1/api-keys', async (request, reply) => {
       try {
         const created = await this.apiKeyAuth.create(request.body?.name ?? '')
-        return reply.code(201).send({ schema: 'market.api-key-created.v1', data: created })
+        return reply.code(201).send({ schema: 'eva.api-key-created.v1', data: created })
       } catch (error) {
         return reply.code(400).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/invalid-api-key-name',
+          type: 'urn:eva:problem:invalid-api-key-name',
           title: 'Invalid API key name', status: 400, code: 'INVALID_API_KEY_NAME',
           detail: error instanceof Error ? error.message : 'API key name is invalid.', retryable: false,
           request_id: `req_${randomUUID()}`,
@@ -333,28 +333,28 @@ export class MarketHttpService extends Service {
       const revealed = await this.apiKeyAuth.reveal(request.params.id)
       if (!revealed.found) {
         return reply.code(404).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/api-key-not-found', title: 'API key not found',
+          type: 'urn:eva:problem:api-key-not-found', title: 'API key not found',
           status: 404, code: 'API_KEY_NOT_FOUND', detail: 'The API key does not exist.', retryable: false,
           request_id: `req_${randomUUID()}`,
         })
       }
       if (!revealed.key) {
         return reply.code(409).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/api-key-not-recoverable', title: 'API key cannot be revealed',
+          type: 'urn:eva:problem:api-key-not-recoverable', title: 'API key cannot be revealed',
           status: 409, code: 'API_KEY_NOT_RECOVERABLE',
           detail: 'This key was created before repeat viewing was supported. Revoke and recreate it.', retryable: false,
           request_id: `req_${randomUUID()}`,
         })
       }
       return reply.header('cache-control', 'no-store').send({
-        schema: 'market.api-key-secret.v1', data: { key: revealed.key },
+        schema: 'eva.api-key-secret.v1', data: { key: revealed.key },
       })
     })
 
     this.app.delete<{ Params: { id: string } }>('/v1/api-keys/:id', async (request, reply) => {
       if (!await this.apiKeyAuth.revoke(request.params.id)) {
         return reply.code(404).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/api-key-not-found', title: 'API key not found',
+          type: 'urn:eva:problem:api-key-not-found', title: 'API key not found',
           status: 404, code: 'API_KEY_NOT_FOUND', detail: 'The API key does not exist.', retryable: false,
           request_id: `req_${randomUUID()}`,
         })
@@ -375,7 +375,7 @@ export class MarketHttpService extends Service {
         (request.query.q?.length ?? 0) > 100
       ) {
         return reply.code(400).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/invalid-local-data-query',
+          type: 'urn:eva:problem:invalid-local-data-query',
           title: 'Invalid local data query',
           status: 400,
           code: 'INVALID_LOCAL_DATA_QUERY',
@@ -394,7 +394,7 @@ export class MarketHttpService extends Service {
         this.dataSyncManager.status(),
       ])
       return {
-        schema: 'market.local-instrument-list.v1',
+        schema: 'eva.local-instrument-list.v1',
         data: result.items,
         page: { total: result.total, limit, offset },
         meta: { storage: status.storage, generated_at: new Date().toISOString() },
@@ -408,7 +408,7 @@ export class MarketHttpService extends Service {
       const limit = Number(request.query.limit ?? 20)
       if (!Number.isInteger(limit) || limit < 1 || limit > 250) {
         return reply.code(400).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/invalid-local-bar-query',
+          type: 'urn:eva:problem:invalid-local-bar-query',
           title: 'Invalid local bar query',
           status: 400,
           code: 'INVALID_LOCAL_BAR_QUERY',
@@ -418,7 +418,7 @@ export class MarketHttpService extends Service {
         })
       }
       return {
-        schema: 'market.local-bar-list.v1',
+        schema: 'eva.local-bar-list.v1',
         data: await this.dataSyncManager.browseBars(request.params.instrumentId, limit),
         meta: { generated_at: new Date().toISOString() },
       }
@@ -427,7 +427,7 @@ export class MarketHttpService extends Service {
     this.app.get('/v1/data-sync', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
       return {
-        schema: 'market.data-sync-status.v1',
+        schema: 'eva.data-sync-status.v1',
         data: await this.dataSyncManager.status(),
         generated_at: new Date().toISOString(),
       }
@@ -459,7 +459,7 @@ export class MarketHttpService extends Service {
         !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 10_000
       ) {
         return reply.code(400).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/invalid-data-sync-request',
+          type: 'urn:eva:problem:invalid-data-sync-request',
           title: 'Invalid data sync request',
           status: 400,
           code: 'INVALID_DATA_SYNC_REQUEST',
@@ -478,14 +478,14 @@ export class MarketHttpService extends Service {
           delayMs,
         })
         return reply.code(202).send({
-          schema: 'market.data-sync-run.v1',
+          schema: 'eva.data-sync-run.v1',
           data: run,
         })
       } catch (error) {
         const code = error instanceof Error ? error.message : 'DATA_SYNC_START_FAILED'
         const conflict = code === 'DATA_SYNC_ALREADY_RUNNING'
         return reply.code(conflict ? 409 : 400).type('application/problem+json').send({
-          type: `https://market-cli.dev/problems/${code.toLowerCase().replaceAll('_', '-')}`,
+          type: `urn:eva:problem:${code.toLowerCase().replaceAll('_', '-')}`,
           title: conflict ? 'Data sync already running' : 'Data sync could not start',
           status: conflict ? 409 : 400,
           code,
@@ -500,7 +500,7 @@ export class MarketHttpService extends Service {
       const run = this.dataSyncManager.cancel()
       if (!run) {
         return reply.code(409).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/data-sync-not-running',
+          type: 'urn:eva:problem:data-sync-not-running',
           title: 'Data sync is not running',
           status: 409,
           code: 'DATA_SYNC_NOT_RUNNING',
@@ -509,13 +509,13 @@ export class MarketHttpService extends Service {
           request_id: `req_${randomUUID()}`,
         })
       }
-      return reply.code(202).send({ schema: 'market.data-sync-run.v1', data: run })
+      return reply.code(202).send({ schema: 'eva.data-sync-run.v1', data: run })
     })
 
     this.app.post('/v1/data-sync/resume', async (_request, reply) => {
       try {
         const run = await this.dataSyncManager.resume()
-        return reply.code(202).send({ schema: 'market.data-sync-run.v1', data: run })
+        return reply.code(202).send({ schema: 'eva.data-sync-run.v1', data: run })
       } catch (error) {
         const code = error instanceof Error ? error.message : 'DATA_SYNC_RESUME_FAILED'
         const detail = code === 'DATA_SYNC_ALREADY_RUNNING'
@@ -524,7 +524,7 @@ export class MarketHttpService extends Service {
             ? 'The instrument catalog changed since the previous run; start a new sync instead.'
             : 'There is no interrupted data sync run to resume.'
         return reply.code(409).type('application/problem+json').send({
-          type: `https://market-cli.dev/problems/${code.toLowerCase().replaceAll('_', '-')}`,
+          type: `urn:eva:problem:${code.toLowerCase().replaceAll('_', '-')}`,
           title: 'Data sync could not resume',
           status: 409,
           code,
@@ -561,7 +561,7 @@ export class MarketHttpService extends Service {
         !Number.isInteger(delayMs) || (delayMs ?? -1) < 0 || (delayMs ?? 0) > 10_000
       ) {
         return reply.code(400).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/invalid-data-sync-schedule',
+          type: 'urn:eva:problem:invalid-data-sync-schedule',
           title: 'Invalid data sync schedule', status: 400,
           code: 'INVALID_DATA_SYNC_SCHEDULE',
           detail: 'enabled, time, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
@@ -572,7 +572,7 @@ export class MarketHttpService extends Service {
         enabled, time, instrument_types: instrumentTypes, lookback_days: lookbackDays!,
         adjustment, delay_ms: delayMs!,
       })
-      return { schema: 'market.data-sync-schedule.v1', data: schedule }
+      return { schema: 'eva.data-sync-schedule.v1', data: schedule }
     })
 
     this.app.get('/v1/data-sources', async (_request, reply) => {
@@ -600,7 +600,7 @@ export class MarketHttpService extends Service {
           (intervalSeconds ?? 0) > 86_400
         ) {
           return reply.code(400).type('application/problem+json').send({
-            type: 'https://market-cli.dev/problems/invalid-health-check-interval',
+            type: 'urn:eva:problem:invalid-health-check-interval',
             title: 'Invalid health check interval',
             status: 400,
             code: 'INVALID_HEALTH_CHECK_INTERVAL',
@@ -618,7 +618,7 @@ export class MarketHttpService extends Service {
     this.app.get('/v1/health', async () => {
       const providers = ctx.marketProviderRegistry.list().length
       return {
-        schema: 'market.health.v1',
+        schema: 'eva.health.v1',
         data: {
           status: providers > 0 ? 'ok' : 'degraded',
           providers,
@@ -675,7 +675,7 @@ export class MarketHttpService extends Service {
         )
         if (cursorIndex < 0) {
           return reply.code(400).type('application/problem+json').send({
-            type: 'https://market-cli.dev/problems/invalid-cursor',
+            type: 'urn:eva:problem:invalid-cursor',
             title: 'Invalid cursor',
             status: 400,
             code: 'INVALID_CURSOR',
@@ -694,7 +694,7 @@ export class MarketHttpService extends Service {
           : null
 
       return {
-        schema: 'market.instrument-list.v1',
+        schema: 'eva.instrument-list.v1',
         data: pageItems.map(toInstrumentRecord),
         page: { next_cursor: nextCursor },
         meta: meta(catalog.sources, catalog.partial, catalog.warnings),
@@ -710,7 +710,7 @@ export class MarketHttpService extends Service {
       )
       if (!instrument) {
         return reply.code(404).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/instrument-not-found',
+          type: 'urn:eva:problem:instrument-not-found',
           title: 'Instrument not found',
           status: 404,
           code: 'INSTRUMENT_NOT_FOUND',
@@ -720,7 +720,7 @@ export class MarketHttpService extends Service {
         })
       }
       return {
-        schema: 'market.instrument.v1',
+        schema: 'eva.instrument.v1',
         data: {
           ...toInstrumentRecord(instrument),
           identifiers: instrument.identifiers,
@@ -741,7 +741,7 @@ export class MarketHttpService extends Service {
     }>('/v1/instrument-search', async (request, reply) => {
       if (!request.query.q?.trim()) {
         return reply.code(400).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/invalid-request',
+          type: 'urn:eva:problem:invalid-request',
           title: 'Invalid request',
           status: 400,
           code: 'INVALID_REQUEST',
@@ -765,7 +765,7 @@ export class MarketHttpService extends Service {
         Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 20,
       )
       return {
-        schema: 'market.instrument-search.v1',
+        schema: 'eva.instrument-search.v1',
         data: matches.map((match) => ({
           ...toInstrumentRecord(match.instrument),
           match_type: match.matchType,
@@ -789,7 +789,7 @@ export class MarketHttpService extends Service {
     }>('/v1/instrument-resolve', async (request, reply) => {
       if (!request.body?.query?.trim()) {
         return reply.code(400).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/invalid-request',
+          type: 'urn:eva:problem:invalid-request',
           title: 'Invalid request',
           status: 400,
           code: 'INVALID_REQUEST',
@@ -825,7 +825,7 @@ export class MarketHttpService extends Service {
             ? { status: 'resolved', instrument: candidates[0], candidates: [] }
             : { status: 'ambiguous', candidates }
       return {
-        schema: 'market.instrument-resolution.v1',
+        schema: 'eva.instrument-resolution.v1',
         data,
         meta: meta(catalog.sources, catalog.partial, catalog.warnings),
       }
@@ -840,7 +840,7 @@ export class MarketHttpService extends Service {
       )
       if (!instrument) {
         return reply.code(404).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/instrument-not-found',
+          type: 'urn:eva:problem:instrument-not-found',
           title: 'Instrument not found',
           status: 404,
           code: 'INSTRUMENT_NOT_FOUND',
@@ -853,7 +853,7 @@ export class MarketHttpService extends Service {
       if (localQuote) {
         const observedAt = new Date().toISOString()
         return {
-          schema: 'market.quote.v1',
+          schema: 'eva.quote.v1',
           data: {
             instrument_id: instrument.instrumentId,
             symbol: instrument.symbol,
@@ -891,7 +891,7 @@ export class MarketHttpService extends Service {
         })
         const quote = result.value
         return {
-          schema: 'market.quote.v1',
+          schema: 'eva.quote.v1',
           data: {
             instrument_id: instrument.instrumentId,
             symbol: instrument.symbol,
@@ -941,7 +941,7 @@ export class MarketHttpService extends Service {
       )
       if (!instrument) {
         return reply.code(404).type('application/problem+json').send({
-          type: 'https://market-cli.dev/problems/instrument-not-found',
+          type: 'urn:eva:problem:instrument-not-found',
           title: 'Instrument not found',
           status: 404,
           code: 'INSTRUMENT_NOT_FOUND',
@@ -962,7 +962,7 @@ export class MarketHttpService extends Service {
         if (localBars) {
           const fetchedAt = new Date().toISOString()
           return {
-            schema: 'market.bar-list.v1',
+            schema: 'eva.bar-list.v1',
             data: localBars.map((bar) => ({
               instrument_id: instrument.instrumentId,
               interval: bar.interval,
@@ -1022,7 +1022,7 @@ export class MarketHttpService extends Service {
           }
         }
         return {
-          schema: 'market.bar-list.v1',
+          schema: 'eva.bar-list.v1',
           data: [...result.value]
             .sort((left, right) => left.periodStart.localeCompare(right.periodStart))
             .map((bar) => ({
@@ -1070,7 +1070,7 @@ export class MarketHttpService extends Service {
         )
         if (!instrument || instrument.type !== 'index') {
           return reply.code(404).type('application/problem+json').send({
-            type: 'https://market-cli.dev/problems/instrument-not-found',
+            type: 'urn:eva:problem:instrument-not-found',
             title: 'Index not found',
             status: 404,
             code: 'INSTRUMENT_NOT_FOUND',
@@ -1123,7 +1123,7 @@ export class MarketHttpService extends Service {
             }
           })
           return {
-            schema: 'market.index-constituent-list.v1',
+            schema: 'eva.index-constituent-list.v1',
             data: rows.sort(
               (left, right) =>
                 (left.rank ?? Number.MAX_SAFE_INTEGER) -

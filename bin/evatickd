@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+daemon_bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository_root=$(dirname "$daemon_bin_dir")
+
+if [ "${1:-}" = "--" ]; then
+    shift
+fi
+
+exec pnpm --dir "$repository_root" --filter @evatick/server start "$@"

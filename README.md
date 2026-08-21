@@ -1,190 +1,147 @@
-# EVA Tick Server v1
+# EVA 服务端
 
-EVA Tick Server is the provider-independent runtime behind EVA Tick CLI. Version 1
-supports mainland A-share equities and indices published by SSE, SZSE, and CSI.
-Equities and indices share one canonical instrument catalog and remain distinct
-instrument types.
+`evatickd` 是 EVA 的市场数据服务进程。它负责维护规范金融标的目录、统一不同数据提供方、执行查询路由与失败回退，并通过版本化 HTTP API 向 `eva` CLI 和其他客户端提供数据。
 
-## Runtime layers
+当前版本支持中国内地 A 股，以及上交所、深交所和中证指数。
+
+## 核心能力
+
+- 规范金融标的目录、搜索与解析
+- 股票和指数的行情快照、日线与分钟行情柱
+- 指数成分查询
+- 多数据提供方注册、健康检查、超时、重试与回退
+- SQLite 标的目录与 DuckDB 历史行情仓库
+- API 密钥认证
+- EVA 管理中心：数据浏览、数据同步、数据源状态和密钥管理
+
+## 架构
 
 ```text
-CLI / other HTTP clients
-        |
-Fastify HTTP transport + versioned JSON contracts
-        |
-catalog, search, resolution, routing, normalization
-        |
-Cordis provider registry + lifecycle
-        |
-one or more InstrumentProvider plugins
-        |
-AKShare / future market-specific sources
+eva CLI / HTTP 客户端
+          │
+      HTTP API
+          │
+目录 · 解析 · 路由 · 规范化
+          │
+  可插拔数据提供方
+          │
+      外部市场数据
 ```
 
-Cordis owns plugin registration and disposal. The core package contains no
-AKShare names or response fields. A provider declares its instruments,
-identifiers, and capabilities; routing retries transient failures and can fall
-back to another provider that declares the same canonical instrument and
-capability.
+CLI 和服务端只通过 HTTP API 通信。OpenAPI 契约是客户端集成的唯一协议源，客户端不依赖服务端实现代码。
 
-The bundled `akshare` plugin uses its own process-isolated Python environment.
-It does not call EVA Tick CLI. This keeps AKShare and pandas outside both the Node
-process and the lightweight CLI installation.
-The adapter currently derives quotes from the latest daily bars, so v1 quotes
-are end-of-day observations rather than a real-time feed.
+## 环境要求
 
-Bars support `1m`, `5m`, `15m`, `30m`, `60m`, and `1d`. Minute bars use
-Asia/Shanghai timestamps, treat the upstream timestamp as the end of the bar,
-and expose whether that period is complete. Available minute history is limited
-by the selected upstream source.
+- Node.js 22.19 或更高版本
+- pnpm 11
+- CPython 3.11 或更高版本
 
-## Run
+## 安装
 
 ```shell
-python3 -m venv providers/akshare-python/.venv
-providers/akshare-python/.venv/bin/python -m pip install ./providers/akshare-python
-corepack enable
 pnpm install --frozen-lockfile
-pnpm start
+
+python3 -m venv providers/akshare-python/.venv
+providers/akshare-python/.venv/bin/python \
+  -m pip install ./providers/akshare-python
 ```
 
-### Data source priority
+## 配置
 
-For daily bars and end-of-day quotes, EVA Tick Server checks the local DuckDB
-warehouse first. A local hit requires the requested date range to be inside the
-recorded synchronization coverage; otherwise routing continues to the remote
-provider sources below. Successful remote daily-bar responses with explicit
-start and end dates are written back to DuckDB, so the same range is local on
-subsequent requests. Minute bars always use remote sources.
-
-The process-isolated Python bridge keeps an ordered source list for each
-market-data type in `providers/akshare-python/evatick_server_akshare/sources.py`.
-It uses AKShare interfaces for Sina, East Money, and Tencent, and the official
-BaoStock client for BaoStock. The first working source wins and failures fall
-through to the next source. Equity and index bars and quotes can therefore use
-different priorities. Successful quote and bars HTTP responses expose the
-selected source as `meta.sources[].upstream`.
-
-Daily equity fallback order is Sina, East Money, Tencent, then BaoStock. Daily
-index fallback order is Sina, Tencent, East Money, then BaoStock. Intraday data
-remains limited to Sina and East Money because Tencent and BaoStock do not
-provide the required minute-bar contract here.
-
-All runtime settings come from one versioned JSON configuration file. Copy
-[`deploy/evatick-server.config.example.json`](deploy/evatick-server.config.example.json)
-outside the repository, replace the password placeholder, and restrict the
-file before the first start:
+复制示例配置，并将占位密码替换为私密值：
 
 ```shell
-install -m 600 deploy/evatick-server.config.example.json /etc/evatick-server/config.json
-# Edit /etc/evatick-server/config.json and replace <set-in-private-config>.
-pnpm --filter @evatick/server start --config /etc/evatick-server/config.json
+cp deploy/evatickd.config.example.json /path/to/evatickd.json
+chmod 600 /path/to/evatickd.json
 ```
 
-The configuration has four sections:
+配置文件包含四部分：
 
-| Section | Settings |
+| 配置段 | 用途 |
 | --- | --- |
-| `server` | Listen host and port, provider retry/deadline settings, health-check schedule |
-| `storage` | SQLite catalog and DuckDB history paths |
-| `admin` | Initial username/password, credential-store path, and API-key-store path |
-| `providers.akshare` | Python executable used by the AKShare provider |
+| `server` | 监听地址、端口、请求超时、重试和健康检查周期 |
+| `storage` | 标的目录和历史行情仓库路径 |
+| `admin` | 管理员账号、初始密码、凭据和 API 密钥存储路径 |
+| `providers` | 数据提供方进程配置 |
 
-Relative file paths are resolved from the configuration file's directory.
-Unknown fields and invalid ranges fail startup so misspelled settings are not
-silently ignored. When `admin.initialPassword` is present on a Unix-like
-system, the configuration file must not be readable by group or other users.
-The initial password creates the scrypt-derived credential store and is never
-logged; after that store exists, remove `initialPassword` from the configuration.
-The management console uses an HttpOnly, SameSite session cookie. Keep the
-listen host on loopback unless a trusted reverse proxy also supplies TLS and
-network controls.
+当配置包含 `admin.initialPassword` 时，Unix 系统要求文件权限为 `0600`。首次启动并生成管理员凭据后，应从配置文件中删除初始密码。
 
-After signing in, open `/admin/api-keys` to create, inspect, or revoke CLI API
-keys. Keys can be shown again or copied from the management console. The
-server keeps a SHA-256 verification hash and an AES-256-GCM encrypted copy in
-the owner-only `admin.apiKeysPath` file; the adjacent encryption-key file is
-also owner-only. Keys created by the earlier hash-only format remain valid but
-must be recreated before they can be viewed. All CLI-facing `/v1` market data
-routes, including health, require `Authorization: Bearer <api-key>` when the
-API-key store is configured. Management-only `/v1/data-*` and `/v1/local-data`
-routes continue to use the administrator session cookie.
+## 启动
+
+直接启动守护进程：
+
+```shell
+bin/evatickd --config /path/to/evatickd.json
+```
+
+也可以通过 pnpm：
+
+```shell
+pnpm evatickd -- --config /path/to/evatickd.json
+```
+
+启动成功后会输出一行 JSON，其中包含服务地址：
+
+```json
+{"schema":"eva.daemon-started.v1","url":"http://127.0.0.1:8765"}
+```
+
+## EVA 管理中心
+
+启动后访问：
+
+```text
+http://127.0.0.1:8765/admin
+```
+
+管理中心提供：
+
+- 本地数据浏览与覆盖范围检查
+- 历史数据手动同步和每日计划
+- 数据提供方健康状态
+- API 密钥创建、显示、复制与撤销
+- 管理员密码修改
+
+如果服务监听在公网地址，应通过可信反向代理提供 TLS，并配合防火墙或安全组限制访问。
 
 ## HTTP API
 
-The source of truth is
-[`contracts/openapi/evatick-api-v1.yaml`](contracts/openapi/evatick-api-v1.yaml).
-The implemented routes are:
+协议源文件：[contracts/openapi/evatick-api-v1.yaml](contracts/openapi/evatick-api-v1.yaml)
 
-- `GET /v1/health`
-- `GET /v1/data-sources`
-- `POST /v1/data-sources/check`
-- `PUT /v1/data-sources/schedule`
-- `GET /v1/data-sync`
-- `POST /v1/data-sync/runs`
-- `POST /v1/data-sync/resume`
-- `POST /v1/data-sync/cancel`
-- `GET /v1/instruments`
-- `GET /v1/instruments/{instrument_id}`
-- `GET /v1/instrument-search`
-- `POST /v1/instrument-resolve`
-- `GET /v1/instruments/{instrument_id}/quote`
-- `GET /v1/instruments/{instrument_id}/bars`
-- `GET /v1/indices/{instrument_id}/constituents`
+主要接口：
 
-The local data-source management console is available at
-`/admin/data-sources`. It independently checks each upstream, such as Sina,
-East Money, and Tencent, by equity and index category. The page displays
-status, latency, capabilities, and supports manual or scheduled checks.
-
-Successful responses carry a versioned `schema`, normalized `data`, and source
-metadata. List responses also carry a cursor page. Failures use
-`application/problem+json`. When a provider catalog refresh fails, the latest
-SQLite snapshot is returned with `meta.partial: true`, `stale: true`, and a
-warning instead of silently presenting stale data as current.
-
-The separate local synchronization console is available at `/admin/data-sync`.
-It starts one background job at a time, stores normalized daily bars in DuckDB,
-and reports progress, failures, coverage, and warehouse size. Re-running a sync
-uses an overlap from ten days before the latest stored bar so upstream fixes are
-applied without duplicating the `(instrument, date, adjustment)` primary key.
-The optional per-instrument delay keeps bulk synchronization single-threaded and
-rate-limited for free upstream sources.
-
-The management console redirects unauthenticated requests to `/admin/login`.
-The signed-in administrator can change the password at `/admin/password`;
-changing it invalidates all other active sessions. Console-facing data-source,
-sync, and local-warehouse endpoints require the same session when
-authentication is configured.
-
-## Provider plugin contract
-
-Implement `InstrumentProvider` from `@evatick/core`, then mount it with
-`server.mountProvider(provider)`. A plugin must provide:
-
-- a stable provider ID;
-- `listInstruments(signal)` with provider symbols and declared capabilities;
-- any supported `getQuote`, `getBars`, or `getConstituents` methods;
-- `ProviderError` classifications that state whether retry is safe.
-
-Provider values are normalized before they cross HTTP. Provider-specific
-parameters and fields never become canonical IDs or API fields.
-
-## Verify
-
-```shell
-pnpm test
-pnpm typecheck
-providers/akshare-python/.venv/bin/python -m pip install -e './providers/akshare-python[test]'
-providers/akshare-python/.venv/bin/python -m pytest providers/akshare-python/tests
+```text
+GET  /v1/health
+GET  /v1/instruments
+GET  /v1/instruments/{instrument_id}
+GET  /v1/instrument-search
+POST /v1/instrument-resolve
+GET  /v1/instruments/{instrument_id}/quote
+GET  /v1/instruments/{instrument_id}/bars
+GET  /v1/indices/{instrument_id}/constituents
 ```
 
-## systemd deployment
+查询成功时返回带版本号的 `schema`、规范化 `data` 和来源元数据；错误使用 `application/problem+json`。
 
-The example unit in `deploy/evatick-server.service` runs the server as a
-restricted `evatick-server` user from `/opt/evatick-server` and reads its only
-runtime configuration from `/etc/evatick-server/config.json`. The companion
-example persists data under `/var/lib/evatick-server` and listens on
-`0.0.0.0:8765`.
-Restrict public access with the cloud security group or place an authenticated
-TLS reverse proxy in front of the service.
+## 验证
+
+```shell
+pnpm typecheck
+pnpm test
+
+providers/akshare-python/.venv/bin/python \
+  -m pip install -e './providers/akshare-python[test]'
+providers/akshare-python/.venv/bin/python \
+  -m pytest providers/akshare-python/tests
+```
+
+## systemd 部署
+
+参考 [deploy/evatickd.service](deploy/evatickd.service)。示例约定：
+
+- 程序目录：`/opt/evatick-server`
+- 配置文件：`/etc/evatickd/config.json`
+- 数据目录：`/var/lib/evatickd`
+- 系统用户：`evatickd`
+
+市场数据仅供研究与参考，不构成投资建议。

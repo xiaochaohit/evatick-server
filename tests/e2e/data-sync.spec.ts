@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
-  createMarketServer,
+  createEvaTickServer,
   type InstrumentProvider,
 } from '@evatick/server'
 
@@ -27,7 +27,7 @@ async function waitForRun(url: string) {
 
 describe('local historical data synchronization', () => {
   it('stores daily bars and re-fetches a ten-day overlap on incremental runs', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'market-data-sync-'))
+    const directory = await mkdtemp(join(tmpdir(), 'eva-data-sync-'))
     const starts: string[] = []
     const provider: InstrumentProvider = {
       id: 'sync-fixture',
@@ -64,7 +64,7 @@ describe('local historical data synchronization', () => {
         }]
       },
     }
-    const server = await createMarketServer({
+    const server = await createEvaTickServer({
       historyPath: join(directory, 'history.duckdb'),
       healthCheckIntervalMs: 0,
     })
@@ -116,7 +116,7 @@ describe('local historical data synchronization', () => {
       )
       expect(browserList.status).toBe(200)
       expect(await browserList.json()).toMatchObject({
-        schema: 'market.local-instrument-list.v1',
+        schema: 'eva.local-instrument-list.v1',
         data: [{
           instrument_id: 'cn:equity:XSHG:600000',
           symbol: '600000',
@@ -133,7 +133,7 @@ describe('local historical data synchronization', () => {
       )
       expect(browserBars.status).toBe(200)
       expect(await browserBars.json()).toMatchObject({
-        schema: 'market.local-bar-list.v1',
+        schema: 'eva.local-bar-list.v1',
         data: [{ trading_date: '2026-01-12', close: '10.4' }],
       })
 
@@ -166,7 +166,7 @@ describe('local historical data synchronization', () => {
   })
 
   it('serves the synchronization management page', async () => {
-    const server = await createMarketServer({ healthCheckIntervalMs: 0 })
+    const server = await createEvaTickServer({ healthCheckIntervalMs: 0 })
     try {
       const response = await fetch(`${server.url}/admin/data-sync`)
       expect(response.status).toBe(200)
@@ -215,7 +215,7 @@ describe('local historical data synchronization', () => {
   })
 
   it('resumes an interrupted run without fetching completed instruments again', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'market-data-resume-'))
+    const directory = await mkdtemp(join(tmpdir(), 'eva-data-resume-'))
     const requestedSymbols: string[] = []
     const provider: InstrumentProvider = {
       id: 'resume-fixture',
@@ -252,7 +252,7 @@ describe('local historical data synchronization', () => {
         }]
       },
     }
-    const server = await createMarketServer({
+    const server = await createEvaTickServer({
       historyPath: join(directory, 'history.duckdb'),
       healthCheckIntervalMs: 0,
     })

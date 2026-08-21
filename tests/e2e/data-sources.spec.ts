@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  createMarketServer,
+  createEvaTickServer,
   ProviderError,
   type InstrumentProvider,
 } from '@evatick/server'
@@ -24,7 +24,7 @@ describe('data source management', () => {
         return { recordsChecked: 12 }
       },
     }
-    const server = await createMarketServer({ healthCheckIntervalMs: 0 })
+    const server = await createEvaTickServer({ healthCheckIntervalMs: 0 })
     try {
       await server.mountProvider(healthyProvider)
 
@@ -65,7 +65,7 @@ describe('data source management', () => {
       const listResponse = await fetch(`${server.url}/v1/data-sources`)
       expect(listResponse.status).toBe(200)
       expect(await listResponse.json()).toMatchObject({
-        schema: 'market.data-source-list.v1',
+        schema: 'eva.data-source-list.v1',
         schedule: { enabled: false, interval_seconds: 0, next_check_at: null },
       })
     } finally {
@@ -81,7 +81,7 @@ describe('data source management', () => {
       }
       return { recordsChecked: 8 }
     })
-    const server = await createMarketServer({
+    const server = await createEvaTickServer({
       healthCheckIntervalMs: 20,
       healthCheckTimeoutMs: 100,
     })

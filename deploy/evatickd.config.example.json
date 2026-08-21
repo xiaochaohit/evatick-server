@@ -1,5 +1,5 @@
 {
-  "schema": "market.server-config.v1",
+  "schema": "eva.server-config.v1",
   "server": {
     "host": "0.0.0.0",
     "port": 8765,
@@ -9,14 +9,14 @@
     "healthCheckTimeoutMs": 30000
   },
   "storage": {
-    "catalogPath": "/var/lib/evatick-server/catalog.sqlite",
-    "historyPath": "/var/lib/evatick-server/market-history.duckdb"
+    "catalogPath": "/var/lib/evatickd/catalog.sqlite",
+    "historyPath": "/var/lib/evatickd/history.duckdb"
   },
   "admin": {
     "username": "admin",
     "initialPassword": "<set-in-private-config>",
-    "credentialsPath": "/var/lib/evatick-server/admin-credentials.json",
-    "apiKeysPath": "/var/lib/evatick-server/api-keys.json"
+    "credentialsPath": "/var/lib/evatickd/admin-credentials.json",
+    "apiKeysPath": "/var/lib/evatickd/api-keys.json"
   },
   "providers": {
     "akshare": {

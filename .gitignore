@@ -14,7 +14,7 @@ __pycache__/
 *.sqlite
 *.sqlite3
 *.duckdb
-deploy/evatick-server.config.json
+deploy/evatickd.config.json
 *.pem
 *.key
 *.p12

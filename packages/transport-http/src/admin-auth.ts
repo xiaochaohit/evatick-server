@@ -16,12 +16,12 @@ import type {
 import { adminLoginHtml, adminPasswordHtml } from './admin-auth-pages.js'
 
 const scrypt = promisify(scryptCallback)
-const sessionCookie = 'market_admin_session'
+const sessionCookie = 'eva_admin_session'
 const minimumPasswordLength = 8
 const maximumPasswordLength = 256
 
 interface StoredCredentials {
-  schema: 'market.admin-credentials.v1'
+  schema: 'eva.admin-credentials.v1'
   username: string
   salt: string
   password_hash: string
@@ -73,7 +73,7 @@ function safeAdminPath(value: unknown, fallback = '/admin/data-sources'): string
 
 function problem(reply: FastifyReply, status: 400 | 401 | 429, code: string, detail: string) {
   return reply.code(status).type('application/problem+json').send({
-    type: `https://market-cli.dev/problems/${code.toLowerCase().replaceAll('_', '-')}`,
+    type: `urn:eva:problem:${code.toLowerCase().replaceAll('_', '-')}`,
     title: status === 401 ? 'Authentication required' : status === 429 ? 'Too many attempts' : 'Invalid request',
     status,
     code,
@@ -148,7 +148,7 @@ export class AdminAuth {
       return reply
         .header('cache-control', 'no-store')
         .header('set-cookie', sessionCookieHeader(token, request))
-        .send({ schema: 'market.admin-session.v1', data: { next: safeAdminPath(request.body.next) } })
+        .send({ schema: 'eva.admin-session.v1', data: { next: safeAdminPath(request.body.next) } })
     })
 
     app.delete('/admin/session', async (request, reply) => {
@@ -186,7 +186,7 @@ export class AdminAuth {
       return reply
         .header('cache-control', 'no-store')
         .header('set-cookie', sessionCookieHeader(token, request))
-        .send({ schema: 'market.admin-password.v1', data: { changed: true } })
+        .send({ schema: 'eva.admin-password.v1', data: { changed: true } })
     })
   }
 
@@ -216,7 +216,7 @@ export class AdminAuth {
       try {
         const parsed = JSON.parse(await readFile(this.options.credentialsPath, 'utf8')) as StoredCredentials
         if (
-          parsed.schema !== 'market.admin-credentials.v1' ||
+          parsed.schema !== 'eva.admin-credentials.v1' ||
           typeof parsed.username !== 'string' ||
           typeof parsed.salt !== 'string' ||
           typeof parsed.password_hash !== 'string' ||
@@ -284,7 +284,7 @@ export class AdminAuth {
     const salt = randomBytes(16)
     const hash = await scrypt(password, salt, 32) as Buffer
     return {
-      schema: 'market.admin-credentials.v1',
+      schema: 'eva.admin-credentials.v1',
       username,
       salt: salt.toString('base64url'),
       password_hash: hash.toString('base64url'),

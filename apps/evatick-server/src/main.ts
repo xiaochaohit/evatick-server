@@ -6,18 +6,18 @@ import { AkshareProvider } from '@evatick/provider-akshare'
 import {
   assertPythonExecutable,
   configurationPathFromArguments,
-  loadMarketServerConfiguration,
+  loadEvaDaemonConfiguration,
 } from './config.js'
-import { createMarketServer } from './index.js'
+import { createEvaTickServer } from './index.js'
 
-export async function startDefaultMarketServer(configurationPath: string) {
-  const configuration = await loadMarketServerConfiguration(configurationPath)
+export async function startEvaTickDaemon(configurationPath: string) {
+  const configuration = await loadEvaDaemonConfiguration(configurationPath)
   await mkdir(dirname(configuration.storage.catalogPath), { recursive: true })
   await mkdir(dirname(configuration.storage.historyPath), { recursive: true })
   await mkdir(dirname(configuration.admin.credentialsPath), { recursive: true })
   await mkdir(dirname(configuration.admin.apiKeysPath), { recursive: true })
   await assertPythonExecutable(configuration.providers.akshare.pythonExecutable)
-  const server = await createMarketServer({
+  const server = await createEvaTickServer({
     host: configuration.server.host,
     port: configuration.server.port,
     catalogPath: configuration.storage.catalogPath,
@@ -38,9 +38,9 @@ export async function startDefaultMarketServer(configurationPath: string) {
 }
 
 const configurationPath = configurationPathFromArguments(process.argv.slice(2))
-const server = await startDefaultMarketServer(configurationPath)
+const server = await startEvaTickDaemon(configurationPath)
 process.stdout.write(`${JSON.stringify({
-  schema: 'market.server-started.v1',
+  schema: 'eva.daemon-started.v1',
   url: server.url,
 })}\n`)
 
@@ -48,7 +48,7 @@ let closing = false
 async function close(signal: string): Promise<void> {
   if (closing) return
   closing = true
-  process.stdout.write(`${JSON.stringify({ schema: 'market.server-stopped.v1', signal })}\n`)
+  process.stdout.write(`${JSON.stringify({ schema: 'eva.daemon-stopped.v1', signal })}\n`)
   await server.close()
 }
 

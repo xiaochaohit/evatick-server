@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createMarketServer, type InstrumentProvider } from '@evatick/server'
+import { createEvaTickServer, type InstrumentProvider } from '@evatick/server'
 
 const provider: InstrumentProvider = {
   id: 'fixture-search',
@@ -48,7 +48,7 @@ const provider: InstrumentProvider = {
 
 describe('instrument discovery over HTTP', () => {
   it('searches aliases, reports ambiguity, and resolves with context', async () => {
-    const server = await createMarketServer()
+    const server = await createEvaTickServer()
     await server.mountProvider(provider)
 
     try {
@@ -57,7 +57,7 @@ describe('instrument discovery over HTTP', () => {
       )
       expect(searchResponse.status).toBe(200)
       expect(await searchResponse.json()).toMatchObject({
-        schema: 'market.instrument-search.v1',
+        schema: 'eva.instrument-search.v1',
         data: [
           {
             instrument_id: 'cn:equity:XSHG:600000',
@@ -87,7 +87,7 @@ describe('instrument discovery over HTTP', () => {
       })
       expect(ambiguousResponse.status).toBe(200)
       expect(await ambiguousResponse.json()).toMatchObject({
-        schema: 'market.instrument-resolution.v1',
+        schema: 'eva.instrument-resolution.v1',
         data: {
           status: 'ambiguous',
           candidates: [
@@ -107,7 +107,7 @@ describe('instrument discovery over HTTP', () => {
       })
       expect(resolvedResponse.status).toBe(200)
       expect(await resolvedResponse.json()).toMatchObject({
-        schema: 'market.instrument-resolution.v1',
+        schema: 'eva.instrument-resolution.v1',
         data: {
           status: 'resolved',
           instrument: {
@@ -122,7 +122,7 @@ describe('instrument discovery over HTTP', () => {
       )
       expect(detailResponse.status).toBe(200)
       expect(await detailResponse.json()).toMatchObject({
-        schema: 'market.instrument.v1',
+        schema: 'eva.instrument.v1',
         data: {
           instrument_id: 'cn:index:SSE:000001',
           identifiers: [{ provider: 'fixture-search', value: 'sh000001' }],
@@ -134,7 +134,7 @@ describe('instrument discovery over HTTP', () => {
   })
 
   it('filters and cursor-paginates the supported catalog', async () => {
-    const server = await createMarketServer()
+    const server = await createEvaTickServer()
     await server.mountProvider(provider)
 
     try {

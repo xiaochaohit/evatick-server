@@ -23,7 +23,7 @@ interface StoredApiKey {
 }
 
 interface StoredApiKeys {
-  schema: 'market.api-keys.v1' | 'market.api-keys.v2'
+  schema: 'eva.api-keys.v1' | 'eva.api-keys.v2'
   keys: StoredApiKey[]
 }
 
@@ -36,9 +36,9 @@ export interface ApiKeySummary {
 }
 
 function problem(reply: FastifyReply, detail: string) {
-  return reply.code(401).header('www-authenticate', 'Bearer realm="evatick-server"')
+  return reply.code(401).header('www-authenticate', 'Bearer realm="eva"')
     .type('application/problem+json').send({
-      type: 'https://market-cli.dev/problems/api-key-required',
+      type: 'urn:eva:problem:api-key-required',
       title: 'API key required',
       status: 401,
       code: 'API_KEY_REQUIRED',
@@ -105,7 +105,7 @@ export class ApiKeyAuth {
     }
     const id = randomUUID()
     const secret = randomBytes(32).toString('base64url')
-    const key = `mk_${id.replaceAll('-', '').slice(0, 12)}_${secret}`
+    const key = `eva_${id.replaceAll('-', '').slice(0, 12)}_${secret}`
     const stored: StoredApiKey = {
       id,
       name: normalizedName,
@@ -192,7 +192,7 @@ export class ApiKeyAuth {
     try {
       await assertOwnerOnly(this.storagePath, 'the API key store')
       const parsed = JSON.parse(await readFile(this.storagePath, 'utf8')) as StoredApiKeys
-      if (!['market.api-keys.v1', 'market.api-keys.v2'].includes(parsed.schema) || !Array.isArray(parsed.keys) ||
+      if (!['eva.api-keys.v1', 'eva.api-keys.v2'].includes(parsed.schema) || !Array.isArray(parsed.keys) ||
           parsed.keys.some((key) => !this.validStoredKey(key))) {
         throw new Error('the API key store is invalid')
       }
@@ -241,7 +241,7 @@ export class ApiKeyAuth {
     if (!this.storagePath) return
     await mkdir(dirname(this.storagePath), { recursive: true })
     const temporary = `${this.storagePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-    await writeFile(temporary, `${JSON.stringify({ schema: 'market.api-keys.v2', keys: this.keys }, null, 2)}\n`, { mode: 0o600 })
+    await writeFile(temporary, `${JSON.stringify({ schema: 'eva.api-keys.v2', keys: this.keys }, null, 2)}\n`, { mode: 0o600 })
     await rename(temporary, this.storagePath)
   }
 }

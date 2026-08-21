@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { createMarketServer } from '@evatick/server'
+import { createEvaTickServer } from '@evatick/server'
 
 async function login(url: string): Promise<string> {
   const response = await fetch(`${url}/admin/session`, {
@@ -18,9 +18,9 @@ async function login(url: string): Promise<string> {
 
 describe('CLI API key authentication', () => {
   it('creates, persists, verifies, lists, and revokes API keys', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'market-api-keys-'))
+    const directory = await mkdtemp(join(tmpdir(), 'eva-api-keys-'))
     const apiKeysPath = join(directory, 'api-keys.json')
-    const first = await createMarketServer({
+    const first = await createEvaTickServer({
       adminPassword: 'test-api-key-admin-password',
       apiKeysPath,
       healthCheckIntervalMs: 0,
@@ -36,6 +36,7 @@ describe('CLI API key authentication', () => {
       const page = await fetch(`${first.url}/admin/api-keys`, { headers: { cookie } })
       expect(page.status).toBe(200)
       const pageHtml = await page.text()
+      expect(pageHtml).toContain('EVA 管理中心')
       expect(pageHtml).toContain('API 密钥')
       expect(pageHtml).toContain('复制')
 
@@ -48,7 +49,7 @@ describe('CLI API key authentication', () => {
       const createdBody = await created.json() as { data: { key: string; summary: { id: string } } }
       key = createdBody.data.key
       keyId = createdBody.data.summary.id
-      expect(key).toMatch(/^mk_[a-f0-9]{12}_/)
+      expect(key).toMatch(/^eva_[a-f0-9]{12}_/)
 
       const accepted = await fetch(`${first.url}/v1/health`, {
         headers: { authorization: `Bearer ${key}` },
@@ -70,14 +71,14 @@ describe('CLI API key authentication', () => {
 
       const stored = await readFile(apiKeysPath, 'utf8')
       expect(stored).not.toContain(key)
-      expect(JSON.parse(stored)).toMatchObject({ schema: 'market.api-keys.v2' })
+      expect(JSON.parse(stored)).toMatchObject({ schema: 'eva.api-keys.v2' })
       expect((await stat(apiKeysPath)).mode & 0o777).toBe(0o600)
       expect((await stat(`${apiKeysPath}.encryption-key`)).mode & 0o777).toBe(0o600)
     } finally {
       await first.close()
     }
 
-    const restarted = await createMarketServer({ apiKeysPath, healthCheckIntervalMs: 0 })
+    const restarted = await createEvaTickServer({ apiKeysPath, healthCheckIntervalMs: 0 })
     try {
       expect((await fetch(`${restarted.url}/v1/health`, {
         headers: { authorization: `Bearer ${key}` },
@@ -97,21 +98,21 @@ describe('CLI API key authentication', () => {
   })
 
   it('keeps hash-only keys valid while reporting that their secret cannot be recovered', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'market-api-keys-v1-'))
+    const directory = await mkdtemp(join(tmpdir(), 'eva-api-keys-v1-'))
     const apiKeysPath = join(directory, 'api-keys.json')
-    const legacyKey = 'mk_legacy_test_key'
+    const legacyKey = 'eva_legacy_test_key'
     const id = randomUUID()
     await writeFile(apiKeysPath, JSON.stringify({
-      schema: 'market.api-keys.v1',
+      schema: 'eva.api-keys.v1',
       keys: [{
         id,
         name: 'legacy-key',
-        prefix: 'mk_legacy_test_key'.slice(0, 18),
+        prefix: 'eva_legacy_test_key'.slice(0, 18),
         key_hash: createHash('sha256').update(legacyKey).digest('hex'),
         created_at: new Date().toISOString(),
       }],
     }), { mode: 0o600 })
-    const server = await createMarketServer({ apiKeysPath, healthCheckIntervalMs: 0 })
+    const server = await createEvaTickServer({ apiKeysPath, healthCheckIntervalMs: 0 })
     try {
       expect((await fetch(`${server.url}/v1/health`, {
         headers: { authorization: `Bearer ${legacyKey}` },

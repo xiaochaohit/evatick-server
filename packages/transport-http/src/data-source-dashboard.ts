@@ -5,7 +5,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>数据源控制台 · EVA Tick Server</title>
+  <title>数据源状态 · EVA</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
     :root {
@@ -131,8 +131,8 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
   <main class="shell">
     <header>
       <div>
-        <div class="eyebrow">EVA Tick Server / Operations</div>
-        <h1>数据源控制台</h1>
+        <div class="eyebrow">EVA / DATA OPERATIONS</div>
+        <h1>数据源状态</h1>
         <p class="subtitle">按股票、指数分类持续观察新浪、东方财富、腾讯等上游接口，在 fallback 掩盖故障前发现异常。</p>
       </div>
       <div class="live"><span class="live-dot"></span><span id="updated">正在连接服务</span></div>
@@ -181,7 +181,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
         <div class="error" id="error"></div>
       </aside>
     </section>
-    <footer>MARKET SERVER · PROVIDER OBSERVABILITY</footer>
+    <footer>EVA · PROVIDER OBSERVABILITY</footer>
   </main>
 
   <script>

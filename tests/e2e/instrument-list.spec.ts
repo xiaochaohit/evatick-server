@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  createMarketServer,
+  createEvaTickServer,
   ProviderError,
   type InstrumentProvider,
 } from '@evatick/server'
@@ -18,7 +18,7 @@ describe('instrument provider lifecycle over HTTP', () => {
         closes += 1
       },
     }
-    const server = await createMarketServer()
+    const server = await createEvaTickServer()
     await server.mountProvider(provider)
 
     await server.close()
@@ -59,7 +59,7 @@ describe('instrument provider lifecycle over HTTP', () => {
       },
     }
 
-    const server = await createMarketServer()
+    const server = await createEvaTickServer()
     const providerPlugin = await server.mountProvider(provider)
 
     try {
@@ -67,7 +67,7 @@ describe('instrument provider lifecycle over HTTP', () => {
 
       expect(response.status).toBe(200)
       expect(await response.json()).toMatchObject({
-        schema: 'market.instrument-list.v1',
+        schema: 'eva.instrument-list.v1',
         data: [
           {
             instrument_id: 'cn:equity:XSHG:600000',
@@ -107,7 +107,7 @@ describe('instrument provider lifecycle over HTTP', () => {
       const afterDisposal = await fetch(`${server.url}/v1/instruments`)
       expect(afterDisposal.status).toBe(200)
       expect(await afterDisposal.json()).toMatchObject({
-        schema: 'market.instrument-list.v1',
+        schema: 'eva.instrument-list.v1',
         data: [],
         page: { next_cursor: null },
         meta: { partial: false, sources: [], warnings: [] },
@@ -157,7 +157,7 @@ describe('instrument provider lifecycle over HTTP', () => {
       },
     }
 
-    const server = await createMarketServer()
+    const server = await createEvaTickServer()
     await server.mountProvider(primary)
     await server.mountProvider(secondary)
 
@@ -212,7 +212,7 @@ describe('instrument provider lifecycle over HTTP', () => {
         ]
       },
     }
-    const server = await createMarketServer({ retryAttempts: 2 })
+    const server = await createEvaTickServer({ retryAttempts: 2 })
     await server.mountProvider(unavailable)
     await server.mountProvider(available)
 

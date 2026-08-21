@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
-  createMarketServer,
+  createEvaTickServer,
   ProviderError,
   type InstrumentProvider,
 } from '@evatick/server'
@@ -34,7 +34,7 @@ describe('catalog persistence', () => {
     }
 
     try {
-      const first = await createMarketServer({ catalogPath })
+      const first = await createEvaTickServer({ catalogPath })
       await first.mountProvider(available)
       const firstResponse = await fetch(`${first.url}/v1/instruments`)
       expect(firstResponse.status).toBe(200)
@@ -46,7 +46,7 @@ describe('catalog persistence', () => {
           throw new ProviderError('PROVIDER_NETWORK_ERROR', 'offline', true)
         },
       }
-      const second = await createMarketServer({ catalogPath, retryAttempts: 1 })
+      const second = await createEvaTickServer({ catalogPath, retryAttempts: 1 })
       await second.mountProvider(unavailable)
       try {
         const response = await fetch(`${second.url}/v1/instruments`)

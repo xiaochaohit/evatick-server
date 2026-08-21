@@ -2,8 +2,8 @@ import { constants } from 'node:fs'
 import { access, readFile, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 
-export interface MarketServerConfiguration {
-  schema: 'market.server-config.v1'
+export interface EvaDaemonConfiguration {
+  schema: 'eva.server-config.v1'
   server: {
     host: string
     port: number
@@ -62,11 +62,11 @@ function configuredPath(value: unknown, path: string, configurationDirectory: st
   return isAbsolute(configured) ? configured : resolve(configurationDirectory, configured)
 }
 
-function parseConfiguration(value: unknown, configurationPath: string): MarketServerConfiguration {
+function parseConfiguration(value: unknown, configurationPath: string): EvaDaemonConfiguration {
   const root = objectAt(value, 'configuration')
   rejectUnknownKeys(root, ['schema', 'server', 'storage', 'admin', 'providers'], 'configuration')
-  if (root.schema !== 'market.server-config.v1') {
-    throw new Error('configuration.schema must be market.server-config.v1')
+  if (root.schema !== 'eva.server-config.v1') {
+    throw new Error('configuration.schema must be eva.server-config.v1')
   }
 
   const server = objectAt(root.server, 'configuration.server')
@@ -98,7 +98,7 @@ function parseConfiguration(value: unknown, configurationPath: string): MarketSe
 
   const configurationDirectory = dirname(configurationPath)
   return {
-    schema: 'market.server-config.v1',
+    schema: 'eva.server-config.v1',
     server: {
       host: stringAt(server.host, 'configuration.server.host', 255),
       port: integerAt(server.port, 'configuration.server.port', 0, 65_535),
@@ -125,7 +125,7 @@ function parseConfiguration(value: unknown, configurationPath: string): MarketSe
   }
 }
 
-async function assertPrivateWhenPasswordConfigured(path: string, configuration: MarketServerConfiguration): Promise<void> {
+async function assertPrivateWhenPasswordConfigured(path: string, configuration: EvaDaemonConfiguration): Promise<void> {
   if (!configuration.admin.initialPassword || process.platform === 'win32') return
   const metadata = await stat(path)
   if ((metadata.mode & 0o077) !== 0) {
@@ -133,7 +133,7 @@ async function assertPrivateWhenPasswordConfigured(path: string, configuration: 
   }
 }
 
-export async function loadMarketServerConfiguration(path: string): Promise<MarketServerConfiguration> {
+export async function loadEvaDaemonConfiguration(path: string): Promise<EvaDaemonConfiguration> {
   const configurationPath = resolve(path)
   let source: string
   try {
@@ -165,7 +165,7 @@ export async function assertPythonExecutable(path: string): Promise<void> {
 
 export function configurationPathFromArguments(arguments_: readonly string[]): string {
   if (arguments_.length !== 2 || arguments_[0] !== '--config' || !arguments_[1]) {
-    throw new Error('usage: evatick-server --config <configuration.json>')
+    throw new Error('usage: evatickd --config <configuration.json>')
   }
   return arguments_[1]
 }

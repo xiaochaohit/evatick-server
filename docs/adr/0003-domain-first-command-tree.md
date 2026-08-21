@@ -1,6 +1,6 @@
 # 使用领域优先的统一命令树
 
-CLI 不向用户暴露 `ak` 或 `raw` 顶层命名空间，因为上游库是实现细节，且会迫使用户在调用前理解内部架构。稳定语义命令与自动生成的上游命令统一放入 `market-cli <domain> <command>` 路径，通过帮助和机器可读 Schema 中的 `stable` 或 `upstream` 稳定性标记区分。
+CLI 不向用户暴露 `ak` 或 `raw` 顶层命名空间，因为上游库是实现细节，且会迫使用户在调用前理解内部架构。稳定语义命令与自动生成的上游命令统一放入 `eva <domain> <command>` 路径，通过帮助和机器可读 Schema 中的 `stable` 或 `upstream` 稳定性标记区分。
 
 ## Consequences
 

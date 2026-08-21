@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  createMarketServer,
+  createEvaTickServer,
   ProviderError,
   type InstrumentProvider,
 } from '@evatick/server'
@@ -112,7 +112,7 @@ describe('provider routing over HTTP', () => {
       },
     }
 
-    const server = await createMarketServer({ retryAttempts: 2 })
+    const server = await createEvaTickServer({ retryAttempts: 2 })
     await server.mountProvider(primary)
     await server.mountProvider(fallback)
 
@@ -123,7 +123,7 @@ describe('provider routing over HTTP', () => {
       expect(quoteResponse.status).toBe(200)
       expect(primaryQuoteAttempts).toBe(2)
       expect(await quoteResponse.json()).toMatchObject({
-        schema: 'market.quote.v1',
+        schema: 'eva.quote.v1',
         data: {
           instrument_id: 'cn:equity:XSHG:600000',
           last: '10.230',
@@ -137,7 +137,7 @@ describe('provider routing over HTTP', () => {
       )
       expect(barsResponse.status).toBe(200)
       expect(await barsResponse.json()).toMatchObject({
-        schema: 'market.bar-list.v1',
+        schema: 'eva.bar-list.v1',
         data: [
           {
             instrument_id: 'cn:index:SSE:000001',
@@ -154,7 +154,7 @@ describe('provider routing over HTTP', () => {
       )
       expect(constituentsResponse.status).toBe(200)
       expect(await constituentsResponse.json()).toMatchObject({
-        schema: 'market.index-constituent-list.v1',
+        schema: 'eva.index-constituent-list.v1',
         data: [
           {
             index_id: 'cn:index:SSE:000001',

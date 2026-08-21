@@ -1,17 +1,17 @@
 [Unit]
-Description=EVA Tick Server
+Description=EVA data service
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-User=evatick-server
-Group=evatick-server
+User=evatickd
+Group=evatickd
 WorkingDirectory=/opt/evatick-server
-Environment=HOME=/var/lib/evatick-server
+Environment=HOME=/var/lib/evatickd
 Environment=PATH=/opt/node-v22.19.0/bin:/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
-ExecStart=/opt/node-v22.19.0/bin/pnpm --filter @evatick/server start --config /etc/evatick-server/config.json
+ExecStart=/opt/evatick-server/bin/evatickd --config /etc/evatickd/config.json
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s
@@ -20,8 +20,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/evatick-server
-ReadOnlyPaths=/etc/evatick-server/config.json
+ReadWritePaths=/var/lib/evatickd
+ReadOnlyPaths=/etc/evatickd/config.json
 
 [Install]
 WantedBy=multi-user.target

@@ -6,12 +6,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   configurationPathFromArguments,
-  loadMarketServerConfiguration,
+  loadEvaDaemonConfiguration,
 } from '../../apps/evatick-server/src/config.js'
 
 function configuration() {
   return {
-    schema: 'market.server-config.v1',
+    schema: 'eva.server-config.v1',
     server: {
       host: '127.0.0.1',
       port: 8765,
@@ -35,15 +35,15 @@ function configuration() {
   }
 }
 
-describe('market server configuration', () => {
+describe('EVA daemon configuration', () => {
   it('loads one versioned file and resolves relative paths from its directory', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'evatick-server-config-'))
+    const directory = await mkdtemp(join(tmpdir(), 'evatickd-config-'))
     const path = join(directory, 'config.json')
     await writeFile(path, JSON.stringify(configuration()), { mode: 0o600 })
     try {
-      const loaded = await loadMarketServerConfiguration(path)
+      const loaded = await loadEvaDaemonConfiguration(path)
       expect(loaded).toMatchObject({
-        schema: 'market.server-config.v1',
+        schema: 'eva.server-config.v1',
         server: { host: '127.0.0.1', port: 8765 },
         admin: { username: 'admin', initialPassword: 'test-configuration-password' },
       })
@@ -57,43 +57,43 @@ describe('market server configuration', () => {
   })
 
   it('rejects unknown fields and example password placeholders', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'evatick-server-config-invalid-'))
+    const directory = await mkdtemp(join(tmpdir(), 'evatickd-config-invalid-'))
     const path = join(directory, 'config.json')
     try {
       const unknown = { ...configuration(), unexpected: true }
       await writeFile(path, JSON.stringify(unknown), { mode: 0o600 })
-      await expect(loadMarketServerConfiguration(path)).rejects.toThrow('unknown field: unexpected')
+      await expect(loadEvaDaemonConfiguration(path)).rejects.toThrow('unknown field: unexpected')
 
       const placeholder = configuration()
       placeholder.admin.initialPassword = '<set-in-private-config>'
       await writeFile(path, JSON.stringify(placeholder), { mode: 0o600 })
-      await expect(loadMarketServerConfiguration(path)).rejects.toThrow('must not be an example placeholder')
+      await expect(loadEvaDaemonConfiguration(path)).rejects.toThrow('must not be an example placeholder')
 
       const tooShort = configuration()
       tooShort.admin.initialPassword = 'short7!'
       await writeFile(path, JSON.stringify(tooShort), { mode: 0o600 })
-      await expect(loadMarketServerConfiguration(path)).rejects.toThrow('8 to 256 characters')
+      await expect(loadEvaDaemonConfiguration(path)).rejects.toThrow('8 to 256 characters')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })
 
   it.runIf(process.platform !== 'win32')('requires private permissions when the file contains an initial password', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'evatick-server-config-mode-'))
+    const directory = await mkdtemp(join(tmpdir(), 'evatickd-config-mode-'))
     const path = join(directory, 'config.json')
     try {
       await writeFile(path, JSON.stringify(configuration()), { mode: 0o600 })
       await chmod(path, 0o644)
-      await expect(loadMarketServerConfiguration(path)).rejects.toThrow('must be owner-only')
+      await expect(loadEvaDaemonConfiguration(path)).rejects.toThrow('must be owner-only')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })
 
   it('requires exactly one --config argument', () => {
-    expect(configurationPathFromArguments(['--config', '/etc/evatick-server/config.json']))
-      .toBe('/etc/evatick-server/config.json')
-    expect(() => configurationPathFromArguments([])).toThrow('usage:')
+    expect(configurationPathFromArguments(['--config', '/etc/evatickd/config.json']))
+      .toBe('/etc/evatickd/config.json')
+    expect(() => configurationPathFromArguments([])).toThrow('usage: evatickd')
     expect(() => configurationPathFromArguments(['--config', 'one.json', 'two.json'])).toThrow('usage:')
   })
 })

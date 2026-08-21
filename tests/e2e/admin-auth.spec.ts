@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { createMarketServer } from '@evatick/server'
+import { createEvaTickServer } from '@evatick/server'
 
 const initialPassword = 'test-initial-password'
 const changedPassword = 'test-changed-password'
@@ -26,7 +26,7 @@ async function login(
 
 describe('management console authentication', () => {
   it('requires login for management pages and console-facing APIs', async () => {
-    const server = await createMarketServer({
+    const server = await createEvaTickServer({
       adminPassword: initialPassword,
       healthCheckIntervalMs: 0,
     })
@@ -37,7 +37,9 @@ describe('management console authentication', () => {
 
       const loginPage = await fetch(`${server.url}/admin/login`)
       expect(loginPage.status).toBe(200)
-      expect(await loginPage.text()).toContain('登录管理后台')
+      const loginHtml = await loginPage.text()
+      expect(loginHtml).toContain('EVA 管理中心')
+      expect(loginHtml).toContain('登录管理后台')
 
       const api = await fetch(`${server.url}/v1/data-sync`)
       expect(api.status).toBe(401)
@@ -49,13 +51,15 @@ describe('management console authentication', () => {
 
       const accepted = await login(server.url, initialPassword)
       expect(accepted.response.status).toBe(200)
-      expect(accepted.cookie).toMatch(/^market_admin_session=/)
+      expect(accepted.cookie).toMatch(/^eva_admin_session=/)
 
       const protectedPage = await fetch(`${server.url}/admin/data-sync`, {
         headers: { cookie: accepted.cookie },
       })
       expect(protectedPage.status).toBe(200)
-      expect(await protectedPage.text()).toContain('修改密码')
+      const protectedHtml = await protectedPage.text()
+      expect(protectedHtml).toContain('EVA 管理中心')
+      expect(protectedHtml).toContain('修改密码')
 
       const protectedApi = await fetch(`${server.url}/v1/data-sync`, {
         headers: { cookie: accepted.cookie },
@@ -67,16 +71,16 @@ describe('management console authentication', () => {
   })
 
   it('rejects passwords shorter than eight characters', async () => {
-    await expect(createMarketServer({
+    await expect(createEvaTickServer({
       adminPassword: 'short7!',
       healthCheckIntervalMs: 0,
     })).rejects.toThrow('8 to 256 characters')
   })
 
   it('changes the password, invalidates other sessions, and persists only a hash', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'market-admin-auth-'))
+    const directory = await mkdtemp(join(tmpdir(), 'eva-admin-auth-'))
     const credentialsPath = join(directory, 'admin-credentials.json')
-    const first = await createMarketServer({
+    const first = await createEvaTickServer({
       adminPassword: initialPassword,
       adminCredentialsPath: credentialsPath,
       healthCheckIntervalMs: 0,
@@ -99,7 +103,7 @@ describe('management console authentication', () => {
         }),
       })
       expect(changed.status).toBe(200)
-      expect(changed.headers.get('set-cookie')).toContain('market_admin_session=')
+      expect(changed.headers.get('set-cookie')).toContain('eva_admin_session=')
 
       const invalidated = await fetch(`${first.url}/v1/data-sync`, {
         headers: { cookie: otherSession.cookie },
@@ -112,7 +116,7 @@ describe('management console authentication', () => {
       expect(credentialFile).not.toContain(initialPassword)
       expect(credentialFile).not.toContain(changedPassword)
       expect(JSON.parse(credentialFile)).toMatchObject({
-        schema: 'market.admin-credentials.v1',
+        schema: 'eva.admin-credentials.v1',
         username: 'admin',
         password_version: 2,
       })
@@ -121,7 +125,7 @@ describe('management console authentication', () => {
       await first.close()
     }
 
-    const restarted = await createMarketServer({
+    const restarted = await createEvaTickServer({
       adminCredentialsPath: credentialsPath,
       healthCheckIntervalMs: 0,
     })

@@ -6,8 +6,8 @@ Accepted.
 
 ## Decision
 
-EVA Tick Server owns the versioned HTTP contract, runtime, storage, provider
-plugins, deployment files, and server tests. EVA Tick CLI owns the Python
+EVA service owns the versioned HTTP contract, runtime, storage, provider
+plugins, deployment files, and server tests. EVA CLI owns the Python
 command-line client, local configuration, output serialization, packaging, and
 CLI-facing tests in a separate repository.
 

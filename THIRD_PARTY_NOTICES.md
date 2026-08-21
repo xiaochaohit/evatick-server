@@ -1,16 +1,16 @@
 # Third-party notices
 
-EVA Tick Server is distributed under the MIT License in `LICENSE`. Its direct
+EVA 服务端 is distributed under the MIT License in `LICENSE`. Its direct
 runtime dependencies are installed separately by Python or pnpm and remain
 subject to their own licenses. They are not vendored in this repository.
 
 | Dependency | Use | License |
 | --- | --- | --- |
-| [AKShare](https://github.com/akfamily/akshare) | EVA Tick Server data provider | MIT |
-| [BaoStock](http://www.baostock.com) | EVA Tick Server fallback data source | BSD License, as declared by the 0.9.3 package metadata |
-| [Cordis](https://github.com/deepseek-ai/deepseek-harness/tree/main/vendor/cordis) | EVA Tick Server plugin lifecycle | MIT |
+| [AKShare](https://github.com/akfamily/akshare) | EVA 服务端 data provider | MIT |
+| [BaoStock](http://www.baostock.com) | EVA 服务端 fallback data source | BSD License, as declared by the 0.9.3 package metadata |
+| [Cordis](https://github.com/deepseek-ai/deepseek-harness/tree/main/vendor/cordis) | EVA 服务端 plugin lifecycle | MIT |
 | [DuckDB Node API](https://github.com/duckdb/duckdb-node-neo) | Local historical-data warehouse | MIT |
-| [Fastify](https://github.com/fastify/fastify) | EVA Tick Server HTTP transport | MIT |
+| [Fastify](https://github.com/fastify/fastify) | EVA 服务端 HTTP transport | MIT |
 
 ## AKShare license
 

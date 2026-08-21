@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
-  title: EVA Tick Server API
+  title: EVA 服务端 API
   version: 1.0.0
-  description: Provider-independent market data API for EVA Tick CLI.
+  description: Provider-independent market data API for EVA CLI.
 paths:
   /v1/health:
     get:
@@ -384,7 +384,7 @@ components:
       required: [schema, data]
       properties:
         schema:
-          const: market.health.v1
+          const: eva.health.v1
         data:
           type: object
           additionalProperties: false
@@ -475,7 +475,7 @@ components:
       required: [schema, data, schedule, generated_at]
       properties:
         schema:
-          const: market.data-source-list.v1
+          const: eva.data-source-list.v1
         data:
           type: array
           items:
@@ -545,7 +545,7 @@ components:
       required: [schema, data]
       properties:
         schema:
-          const: market.data-sync-run.v1
+          const: eva.data-sync-run.v1
         data:
           $ref: '#/components/schemas/DataSyncRun'
     DataSyncStatusResponse:
@@ -554,7 +554,7 @@ components:
       required: [schema, data, generated_at]
       properties:
         schema:
-          const: market.data-sync-status.v1
+          const: eva.data-sync-status.v1
         data:
           type: object
           additionalProperties: true
@@ -726,7 +726,7 @@ components:
       required: [schema, data, page, meta]
       properties:
         schema:
-          const: market.instrument-list.v1
+          const: eva.instrument-list.v1
         data:
           type: array
           items:
@@ -741,7 +741,7 @@ components:
       required: [schema, data, meta]
       properties:
         schema:
-          const: market.instrument.v1
+          const: eva.instrument.v1
         data:
           $ref: '#/components/schemas/InstrumentDetail'
         meta:
@@ -752,7 +752,7 @@ components:
       required: [schema, data, page, meta]
       properties:
         schema:
-          const: market.instrument-search.v1
+          const: eva.instrument-search.v1
         data:
           type: array
           items:
@@ -803,7 +803,7 @@ components:
       required: [schema, data, meta]
       properties:
         schema:
-          const: market.instrument-resolution.v1
+          const: eva.instrument-resolution.v1
         data:
           $ref: '#/components/schemas/InstrumentResolutionData'
         meta:
@@ -870,7 +870,7 @@ components:
       required: [schema, data, meta]
       properties:
         schema:
-          const: market.quote.v1
+          const: eva.quote.v1
         data:
           $ref: '#/components/schemas/Quote'
         meta:
@@ -931,7 +931,7 @@ components:
       required: [schema, data, page, meta]
       properties:
         schema:
-          const: market.bar-list.v1
+          const: eva.bar-list.v1
         data:
           type: array
           items:
@@ -984,7 +984,7 @@ components:
       required: [schema, data, page, meta]
       properties:
         schema:
-          const: market.index-constituent-list.v1
+          const: eva.index-constituent-list.v1
         data:
           type: array
           items:
