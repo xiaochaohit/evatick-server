@@ -70,29 +70,35 @@ index fallback order is Sina, Tencent, East Money, then BaoStock. Intraday data
 remains limited to Sina and East Money because Tencent and BaoStock do not
 provide the required minute-bar contract here.
 
-Configuration uses environment variables:
+All runtime settings come from one versioned JSON configuration file. Copy
+[`deploy/market-server.config.example.json`](deploy/market-server.config.example.json)
+outside the repository, replace the password placeholder, and restrict the
+file before the first start:
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `MARKET_SERVER_HOST` | `127.0.0.1` | Listen host |
-| `MARKET_SERVER_PORT` | `8765` | Listen port; use `0` for an ephemeral port |
-| `MARKET_SERVER_CATALOG_PATH` | user data directory | SQLite catalog snapshot |
-| `MARKET_SERVER_HISTORY_PATH` | user data directory | DuckDB daily-bar warehouse |
-| `MARKET_SERVER_AKSHARE_PYTHON` | bundled provider venv, then `python3` | Python with `market-server-akshare` installed |
-| `MARKET_SERVER_RETRY_ATTEMPTS` | `2` | Attempts per provider |
-| `MARKET_SERVER_REQUEST_TIMEOUT_MS` | `30000` | Per-provider deadline |
-| `MARKET_SERVER_HEALTH_CHECK_INTERVAL_SECONDS` | `60` | Provider health-check interval; use `0` to disable |
-| `MARKET_SERVER_HEALTH_CHECK_TIMEOUT_MS` | `10000` | Deadline for one provider health check |
-| `MARKET_SERVER_ADMIN_USERNAME` | `admin` | Initial management-console account name |
-| `MARKET_SERVER_ADMIN_PASSWORD` | none | Initial password (12–256 characters); required only when the credential store does not exist |
-| `MARKET_SERVER_ADMIN_CREDENTIALS_PATH` | user data directory | Password-hash credential store; created with owner-only permissions |
+```shell
+install -m 600 deploy/market-server.config.example.json /etc/market-server/config.json
+# Edit /etc/market-server/config.json and replace <set-in-private-config>.
+pnpm --filter @market-cli/server start --config /etc/market-server/config.json
+```
 
-Before the first start, provide `MARKET_SERVER_ADMIN_PASSWORD` through the
-service environment or a secret manager. The password is used only to create a
-scrypt-derived credential store and is not written to logs. Later starts read
-that store, so the initial-password variable can be removed. The management
-console uses an HttpOnly, SameSite session cookie; keep the default loopback
-host unless a trusted reverse proxy also supplies TLS and network controls.
+The configuration has four sections:
+
+| Section | Settings |
+| --- | --- |
+| `server` | Listen host and port, provider retry/deadline settings, health-check schedule |
+| `storage` | SQLite catalog and DuckDB history paths |
+| `admin` | Initial username/password and the password-hash credential-store path |
+| `providers.akshare` | Python executable used by the AKShare provider |
+
+Relative file paths are resolved from the configuration file's directory.
+Unknown fields and invalid ranges fail startup so misspelled settings are not
+silently ignored. When `admin.initialPassword` is present on a Unix-like
+system, the configuration file must not be readable by group or other users.
+The initial password creates the scrypt-derived credential store and is never
+logged; after that store exists, remove `initialPassword` from the configuration.
+The management console uses an HttpOnly, SameSite session cookie. Keep the
+listen host on loopback unless a trusted reverse proxy also supplies TLS and
+network controls.
 
 ## HTTP API
 
@@ -166,7 +172,9 @@ providers/akshare-python/.venv/bin/python -m pytest providers/akshare-python/tes
 ## systemd deployment
 
 The example unit in `deploy/market-server.service` runs the server as a
-restricted `market-server` user from `/opt/market-cli/server`, persists the
-catalog under `/var/lib/market-server`, and listens on `0.0.0.0:8765`.
+restricted `market-server` user from `/opt/market-cli/server` and reads its only
+runtime configuration from `/etc/market-server/config.json`. The companion
+example persists data under `/var/lib/market-server` and listens on
+`0.0.0.0:8765`.
 Restrict public access with the cloud security group or place an authenticated
 TLS reverse proxy in front of the service.

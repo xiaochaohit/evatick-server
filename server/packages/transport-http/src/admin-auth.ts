@@ -230,13 +230,13 @@ export class AdminAuth {
       }
     }
     if (!this.options.initialPassword) {
-      throw new Error('MARKET_SERVER_ADMIN_PASSWORD is required when initializing admin authentication')
+      throw new Error('configuration.admin.initialPassword is required when initializing admin authentication')
     }
     if (this.options.initialPassword.length < minimumPasswordLength || this.options.initialPassword.length > maximumPasswordLength) {
-      throw new Error(`MARKET_SERVER_ADMIN_PASSWORD must contain ${minimumPasswordLength} to ${maximumPasswordLength} characters`)
+      throw new Error(`configuration.admin.initialPassword must contain ${minimumPasswordLength} to ${maximumPasswordLength} characters`)
     }
     const username = this.options.username?.trim() || 'admin'
-    if (username.length > 64) throw new Error('MARKET_SERVER_ADMIN_USERNAME must contain at most 64 characters')
+    if (username.length > 64) throw new Error('configuration.admin.username must contain at most 64 characters')
     this.credentials = await this.hashPassword(username, this.options.initialPassword, 1)
     await this.persist()
   }
