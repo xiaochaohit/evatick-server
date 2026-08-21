@@ -2,60 +2,69 @@
 
 # EVA Tick Server
 
-**面向 EVA CLI 与自动化客户端的、可自托管的中国市场数据服务。**
+**Normalized, readable financial data for LLMs, AI agents, and automated clients.**
 
 [![CI](https://github.com/xiaochaohit/evatick-server/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaochaohit/evatick-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![pnpm](https://img.shields.io/badge/pnpm-11-F69220?logo=pnpm&logoColor=white)](package.json)
 
-[English](README.en.md) · 简体中文
+English · [简体中文](README.zh-CN.md)
 
 </div>
 
-EVA Tick Server（`evatickd`）将不同数据提供方的市场数据统一为版本化 HTTP API。它维护规范金融标的目录，完成搜索与解析、查询路由、超时重试、数据源回退和结果规范化，并提供一个用于数据浏览与运维的本地管理中心。
+EVA Tick Server (`evatickd`) turns fragmented, provider-specific market data into normalized, readable, versioned JSON designed for large language models and tool-using agents. It maintains a canonical instrument catalog, performs search and resolution, routes requests with timeouts and fallback, and serves the EVA CLI and other automated clients through HTTP.
 
-当前版本面向中国内地市场，支持 A 股及上交所、深交所和中证指数。AKShare 是首个数据提供方，但不是服务的产品边界。
+The current release targets mainland China: A-shares plus Shanghai, Shenzhen, and CSI indices. AKShare is the first data provider, but it does not define the product boundary.
 
-<!-- 媒体位：将快速演示 GIF/WebP 放在 docs/assets/evatick-demo.webp，然后取消下一行注释。 -->
-<!-- ![EVA Tick Server 快速演示](docs/assets/evatick-demo.webp) -->
+<!-- Media slot: add a demo GIF/WebP at docs/assets/evatick-demo.webp, then uncomment the next line. -->
+<!-- ![EVA Tick Server demo](docs/assets/evatick-demo.webp) -->
 
-## 为什么选择 EVA Tick Server
+## Built for LLMs and AI agents
 
-- **提供方无关的契约**：客户端面向稳定的金融标的与市场数据模型，而不是上游库的函数或字段。
-- **规范标的身份**：用类似 `cn:equity:XSHE:000001` 的稳定 ID 关联交易代码、别名与提供方标识。
-- **可靠的查询路径**：内置健康检查、超时、重试、数据源回退，以及显式的部分结果和陈旧数据标记。
-- **本地优先的数据管理**：使用 SQLite 保存标的目录、DuckDB 保存历史行情，并通过管理中心执行浏览和同步。
-- **面向自动化**：OpenAPI 是客户端集成的协议源；响应包含版本化 `schema`、来源元数据与结构化错误。
+Traditional financial APIs often expose provider-specific functions, identifiers, and fields directly, making them difficult for models to understand, invoke, and combine. EVA Tick Server adds a stable semantic layer between models and data providers:
 
-## 功能与覆盖范围
+- **Understandable domain semantics** — consistent concepts such as instruments, quotes, bars, and index constituents reduce guesswork about upstream terminology.
+- **Predictable structures** — versioned JSON schemas, normalized fields, and canonical instrument IDs make tool calls and result parsing more reliable.
+- **Traceable results** — provenance, fetch times, partial and stale states, and warnings help models communicate uncertainty.
+- **Composable discovery** — catalog, search, and resolution endpoints safely map natural language or trading codes to canonical instruments.
 
-| 金融标的 | 市场范围 | 行情快照 | 行情柱 | 指数成分 |
+## Why EVA Tick Server
+
+- **Provider-independent contracts** — clients consume stable instrument and market-data models instead of upstream functions or fields.
+- **Canonical instrument identity** — stable IDs such as `cn:equity:XSHE:000001` connect trading codes, aliases, and provider identifiers.
+- **Resilient query paths** — health checks, timeouts, retries, source fallback, and explicit partial or stale-result metadata are built in.
+- **Local-first data operations** — SQLite stores the instrument catalog, DuckDB stores historical bars, and the admin console manages browsing and synchronization.
+- **Automation-friendly** — OpenAPI is the integration source of truth, while responses carry versioned schemas, provenance metadata, and structured errors.
+
+## Features and coverage
+
+| Instrument | Market coverage | Quotes | Bars | Constituents |
 | --- | --- | :---: | :---: | :---: |
-| 股票 | 中国内地 A 股 | ✓ | 分钟、日线 | — |
-| 指数 | 上交所、深交所、中证指数 | ✓ | 分钟、日线 | ✓ |
+| Equities | Mainland China A-shares | ✓ | Intraday, daily | — |
+| Indices | Shanghai, Shenzhen, and CSI indices | ✓ | Intraday, daily | ✓ |
 
-服务端还提供：
+The server also provides:
 
-- 标的目录、详情、搜索与带上下文的解析
-- 多数据源健康检查、请求超时、重试和失败回退
-- 历史日线后台同步、断点恢复和每日计划
-- API 密钥认证及符合 RFC 9457 风格的 `application/problem+json` 错误
-- 管理员登录、密钥管理、数据浏览、同步控制和数据源状态页面
+- Instrument listing, details, search, and context-aware resolution
+- Multi-source health checks, request timeouts, retries, and fallback
+- Background daily-bar synchronization, resume support, and daily schedules
+- API-key authentication and RFC 9457-style `application/problem+json` errors
+- Admin login, key management, local data browsing, sync controls, and provider status
 
 > [!NOTE]
-> 行情可用性受上游数据源、交易时段和网络状况影响。当前覆盖范围不代表全球全部金融标的或全部市场数据能力。
+> Data availability depends on upstream sources, trading hours, and network conditions. The current scope does not imply coverage of every global instrument or market-data capability.
 
-## 快速开始
+## Quick start
 
-### 1. 环境要求
+### 1. Prerequisites
 
-- Node.js 22.19 或更高版本
-- pnpm 11（仓库锁定版本为 11.7.0）
-- 64 位 CPython 3.11 或更高版本
-- Linux 或 macOS；生产部署示例使用 systemd
+- Node.js 22.19 or later
+- pnpm 11 (the repository pins 11.7.0)
+- 64-bit CPython 3.11 or later
+- Linux or macOS; the production example uses systemd
 
-### 2. 安装依赖
+### 2. Install dependencies
 
 ```shell
 git clone https://github.com/xiaochaohit/evatick-server.git
@@ -68,42 +77,42 @@ providers/akshare-python/.venv/bin/python \
   -m pip install ./providers/akshare-python
 ```
 
-### 3. 创建配置
+### 3. Create a configuration
 
 ```shell
 cp deploy/evatickd.config.example.json ./evatickd.config.json
 chmod 600 ./evatickd.config.json
 ```
 
-编辑 `evatickd.config.json`：
+Edit `evatickd.config.json`:
 
-1. 将 `admin.initialPassword` 替换为至少 8 个字符的私密初始密码。
-2. 将 `providers.akshare.pythonExecutable` 改为刚创建的虚拟环境 Python 的绝对路径。
-3. 本地开发时，将 `storage` 和 `admin` 下的 `/var/lib/evatickd/...` 路径改为当前用户可写的路径，例如 `./data/...`。
+1. Replace `admin.initialPassword` with a private initial password of at least eight characters.
+2. Set `providers.akshare.pythonExecutable` to the absolute path of the virtual-environment Python created above.
+3. For local development, replace the `/var/lib/evatickd/...` paths under `storage` and `admin` with paths writable by your user, such as `./data/...`.
 
-配置文件中的相对路径以配置文件所在目录为基准。当文件包含 `admin.initialPassword` 时，Unix 系统要求其权限为 `0600`。
+Relative paths are resolved from the configuration file's directory. On Unix, a configuration containing `admin.initialPassword` must have mode `0600`.
 
-### 4. 启动服务
+### 4. Start the server
 
 ```shell
 bin/evatickd --config ./evatickd.config.json
 ```
 
-也可以通过 pnpm 启动：
+You can also start it through pnpm:
 
 ```shell
 pnpm evatickd -- --config ./evatickd.config.json
 ```
 
-服务就绪后会输出：
+When ready, the daemon prints:
 
 ```json
 {"schema":"eva.daemon-started.v1","url":"http://127.0.0.1:8765"}
 ```
 
-### 5. 创建 API 密钥并验证
+### 5. Create an API key and verify the server
 
-访问 [http://127.0.0.1:8765/admin](http://127.0.0.1:8765/admin)，使用配置中的管理员账号和初始密码登录，然后在“API 密钥”页面创建密钥。
+Open [http://127.0.0.1:8765/admin](http://127.0.0.1:8765/admin), sign in with the configured administrator credentials, and create a key on the **API Keys** page.
 
 ```shell
 export EVA_API_KEY='<your-api-key>'
@@ -113,11 +122,11 @@ curl --fail --silent --show-error \
   http://127.0.0.1:8765/v1/health
 ```
 
-管理员凭据首次生成后，应从配置文件中删除 `initialPassword`，保留由 `credentialsPath` 指向的凭据文件。
+After the administrator credentials have been initialized, remove `initialPassword` from the configuration and retain the credentials file referenced by `credentialsPath`.
 
-## 使用示例
+## Usage
 
-所有公开市场数据接口都使用 Bearer API 密钥。下面的示例搜索“平安银行”，再使用返回的规范标的 ID 查询行情；URL 中的中文由 `curl` 自动编码并不总是可靠，因而示例使用 `--get --data-urlencode`。
+All public market-data endpoints require a Bearer API key. This example searches for Ping An Bank and uses its canonical instrument ID to fetch market data. `--get --data-urlencode` avoids relying on shell- or client-specific handling of Chinese characters in URLs.
 
 ```shell
 curl --get --fail --silent --show-error \
@@ -140,89 +149,89 @@ curl --get --fail --silent --show-error \
 
 ## HTTP API
 
-[OpenAPI 3.1 契约](contracts/openapi/evatick-api-v1.yaml)是客户端集成的协议源。
+The [OpenAPI 3.1 contract](contracts/openapi/evatick-api-v1.yaml) is the protocol source of truth for client integrations.
 
-| 方法 | 路径 | 用途 |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/v1/health` | 服务与数据提供方状态 |
-| `GET` | `/v1/instruments` | 分页列出规范金融标的 |
-| `GET` | `/v1/instruments/{instrument_id}` | 获取标的详情与提供方标识 |
-| `GET` | `/v1/instrument-search` | 按名称、代码或别名搜索标的 |
-| `POST` | `/v1/instrument-resolve` | 结合上下文解析唯一标的 |
-| `GET` | `/v1/instruments/{instrument_id}/quote` | 获取最新行情快照 |
-| `GET` | `/v1/instruments/{instrument_id}/bars` | 获取规范化 OHLCV 行情柱 |
-| `GET` | `/v1/indices/{instrument_id}/constituents` | 获取指数成分 |
+| `GET` | `/v1/health` | Report server and provider health |
+| `GET` | `/v1/instruments` | List canonical instruments with cursor pagination |
+| `GET` | `/v1/instruments/{instrument_id}` | Get instrument details and provider identifiers |
+| `GET` | `/v1/instrument-search` | Search by name, identifier, or alias |
+| `POST` | `/v1/instrument-resolve` | Resolve input to one instrument using context |
+| `GET` | `/v1/instruments/{instrument_id}/quote` | Get the latest normalized quote |
+| `GET` | `/v1/instruments/{instrument_id}/bars` | Get normalized OHLCV bars |
+| `GET` | `/v1/indices/{instrument_id}/constituents` | Get index constituents |
 
-成功响应包含版本化 `schema`、规范化 `data` 和来源元数据；失败响应使用 `application/problem+json`。管理中心专用的同步、数据源和密钥管理接口也记录在 OpenAPI 契约中。
+Successful responses contain a versioned `schema`, normalized `data`, and provenance metadata. Failures use `application/problem+json`. Admin-only synchronization, source-health, and key-management endpoints are also described in the OpenAPI contract.
 
-## 架构
+## Architecture
 
 ```text
-eva CLI / HTTP 客户端
+eva CLI / HTTP clients
           │
-          │ Bearer API 密钥
+          │ Bearer API key
           ▼
-   版本化 HTTP API ───────── EVA 管理中心
+  Versioned HTTP API ───────── EVA Admin Console
           │
           ▼
-目录 · 解析 · 路由 · 规范化 · 同步
-     │                    │
-     ▼                    ▼
-SQLite 标的目录       DuckDB 历史仓库
+Catalog · Resolution · Routing · Normalization · Sync
+     │                              │
+     ▼                              ▼
+SQLite instrument catalog      DuckDB history store
      │
      ▼
-Cordis 数据提供方插件
+Cordis provider plugins
      │
      ▼
-AKShare Python 桥接进程
+AKShare Python bridge process
      │
      ▼
-新浪 · 东方财富 · 腾讯财经 · BaoStock 等上游数据源
+Sina · Eastmoney · Tencent Finance · BaoStock · other upstreams
 ```
 
-CLI 与服务端只通过 HTTP API 通信，不依赖服务端实现代码。数据提供方插件由 Cordis 管理生命周期；Python 数据桥接运行在独立进程中。
+The CLI communicates with the server exclusively through HTTP and does not depend on server implementation code. Cordis manages provider-plugin lifecycles, while the Python data bridge runs in an isolated process.
 
-### 仓库结构
+### Repository layout
 
-| 路径 | 职责 |
+| Path | Responsibility |
 | --- | --- |
-| `apps/evatick-server` | `evatickd` 进程入口与配置加载 |
-| `packages/core` | 领域模型、目录与路由契约 |
-| `packages/transport-http` | HTTP API、认证、管理中心与历史仓库 |
-| `packages/catalog-sqlite` | SQLite 标的目录实现 |
-| `packages/cordis-runtime` | Cordis 插件运行时集成 |
-| `packages/provider-akshare` | AKShare 数据提供方插件 |
-| `providers/akshare-python` | 进程隔离的 Python 数据桥接 |
-| `contracts/openapi` | 公开 HTTP API 契约 |
-| `deploy` | 配置与 systemd 部署示例 |
+| `apps/evatick-server` | `evatickd` entry point and configuration loading |
+| `packages/core` | Domain models, catalog contracts, and routing contracts |
+| `packages/transport-http` | HTTP API, authentication, admin console, and history store |
+| `packages/catalog-sqlite` | SQLite instrument-catalog implementation |
+| `packages/cordis-runtime` | Cordis plugin-runtime integration |
+| `packages/provider-akshare` | AKShare provider plugin |
+| `providers/akshare-python` | Process-isolated Python data bridge |
+| `contracts/openapi` | Public HTTP API contract |
+| `deploy` | Configuration and systemd deployment examples |
 
-## 配置参考
+## Configuration reference
 
-| 配置段 | 用途 |
+| Section | Purpose |
 | --- | --- |
-| `server` | 监听地址、端口、请求超时、重试和健康检查周期 |
-| `storage` | SQLite 标的目录与 DuckDB 历史仓库路径 |
-| `admin` | 管理员账号、初始密码、凭据和 API 密钥存储路径 |
-| `providers` | 数据提供方进程及其运行时配置 |
+| `server` | Listen address, port, timeouts, retries, and health-check interval |
+| `storage` | SQLite catalog and DuckDB history-store paths |
+| `admin` | Administrator account, initial password, credentials, and API-key paths |
+| `providers` | Provider processes and runtime configuration |
 
-完整示例见 [`deploy/evatickd.config.example.json`](deploy/evatickd.config.example.json)。服务启动时会严格校验未知字段、数值范围、文件权限与 Python 可执行文件。
+See [`deploy/evatickd.config.example.json`](deploy/evatickd.config.example.json) for the complete example. Startup validation rejects unknown fields, out-of-range values, unsafe file permissions, and invalid Python executables.
 
-## 管理中心
+## Admin console
 
-管理中心默认位于 [http://127.0.0.1:8765/admin](http://127.0.0.1:8765/admin)，提供：
+The admin console is available by default at [http://127.0.0.1:8765/admin](http://127.0.0.1:8765/admin). It provides:
 
-- 本地数据浏览与覆盖范围检查
-- 历史数据手动同步、取消、恢复和每日计划
-- 数据提供方健康状态与定时检查
-- API 密钥创建、显示、复制与撤销
-- 管理员密码修改与会话管理
+- Local data browsing and coverage inspection
+- Manual historical-data sync, cancellation, resume, and daily schedules
+- Provider health and scheduled checks
+- API-key creation, reveal, copy, and revocation
+- Administrator password and session management
 
-<!-- 截图位：将管理中心截图放在 docs/assets/admin-console.png，然后取消下一行注释。 -->
-<!-- ![EVA 管理中心](docs/assets/admin-console.png) -->
+<!-- Screenshot slot: add the admin console image at docs/assets/admin-console.png, then uncomment the next line. -->
+<!-- ![EVA Admin Console](docs/assets/admin-console.png) -->
 
-如果服务监听在公网地址，应通过可信反向代理提供 TLS，并使用防火墙或安全组限制访问。不要将配置、凭据、API 密钥或数据目录提交到版本控制。
+If the service listens on a public interface, terminate TLS with a trusted reverse proxy and restrict access with firewall or security-group rules. Never commit configurations, credentials, API keys, or data directories to version control.
 
-## 开发与验证
+## Development and verification
 
 ```shell
 pnpm typecheck
@@ -234,25 +243,25 @@ providers/akshare-python/.venv/bin/python \
   -m pytest -q providers/akshare-python/tests
 ```
 
-CI 会在每次 push 和 pull request 时运行 TypeScript 类型检查、Node.js 测试与 Python 测试。提交修改前请保持 OpenAPI 契约、实现和测试同步。
+CI runs TypeScript type checking, Node.js tests, and Python tests on every push and pull request. Keep the OpenAPI contract, implementation, and tests synchronized when changing behavior.
 
-## 部署
+## Deployment
 
-仓库提供 [`deploy/evatickd.service`](deploy/evatickd.service) 作为 systemd 起点。示例约定：
+The repository includes [`deploy/evatickd.service`](deploy/evatickd.service) as a systemd starting point. The example assumes:
 
-- 程序目录：`/opt/evatick-server`
-- 配置文件：`/etc/evatickd/config.json`
-- 数据目录：`/var/lib/evatickd`
-- 系统用户：`evatickd`
+- Application directory: `/opt/evatick-server`
+- Configuration file: `/etc/evatickd/config.json`
+- Data directory: `/var/lib/evatickd`
+- System user: `evatickd`
 
-生产环境还应自行配置 TLS 终止、访问控制、日志收集、监控、备份与进程资源限制。
+Production deployments should additionally configure TLS termination, access controls, log collection, monitoring, backups, and process resource limits.
 
-## 贡献
+## Contributing
 
-欢迎提交 issue 和 pull request。开始前请阅读 [`CONTEXT.md`](CONTEXT.md) 中的领域语言、开发流程与安全规则；架构决策记录位于 [`docs/adr`](docs/adr)。请为行为变更补充测试，并确保上面的全部验证命令通过。
+Issues and pull requests are welcome. Before contributing, read [`CONTEXT.md`](CONTEXT.md) for the project's domain language, workflow, and security rules. Architecture decision records live under [`docs/adr`](docs/adr). Add tests for behavior changes and ensure that all verification commands above pass.
 
-## 许可证与免责声明
+## License and disclaimer
 
-本项目基于 [MIT License](LICENSE) 发布。第三方组件与上游数据源说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+This project is available under the [MIT License](LICENSE). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for third-party software and upstream data-source notices.
 
-市场数据仅供研究与参考，不保证完整性、准确性或及时性，不构成投资建议。
+Market data is provided for research and reference only, without guarantees of completeness, accuracy, or timeliness. Nothing in this project constitutes investment advice.
