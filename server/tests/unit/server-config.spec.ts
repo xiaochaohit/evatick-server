@@ -68,6 +68,11 @@ describe('market server configuration', () => {
       placeholder.admin.initialPassword = '<set-in-private-config>'
       await writeFile(path, JSON.stringify(placeholder), { mode: 0o600 })
       await expect(loadMarketServerConfiguration(path)).rejects.toThrow('must not be an example placeholder')
+
+      const tooShort = configuration()
+      tooShort.admin.initialPassword = 'short7!'
+      await writeFile(path, JSON.stringify(tooShort), { mode: 0o600 })
+      await expect(loadMarketServerConfiguration(path)).rejects.toThrow('8 to 256 characters')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

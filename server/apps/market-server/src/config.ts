@@ -87,11 +87,11 @@ function parseConfiguration(value: unknown, configurationPath: string): MarketSe
   if (initialPassword !== undefined) {
     if (
       typeof initialPassword !== 'string' ||
-      initialPassword.length < 12 ||
+      initialPassword.length < 8 ||
       initialPassword.length > 256 ||
       /^<.*>$/.test(initialPassword)
     ) {
-      throw new Error('configuration.admin.initialPassword must contain 12 to 256 characters and must not be an example placeholder')
+      throw new Error('configuration.admin.initialPassword must contain 8 to 256 characters and must not be an example placeholder')
     }
   }
 

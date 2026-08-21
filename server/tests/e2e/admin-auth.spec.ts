@@ -66,6 +66,13 @@ describe('management console authentication', () => {
     }
   })
 
+  it('rejects passwords shorter than eight characters', async () => {
+    await expect(createMarketServer({
+      adminPassword: 'short7!',
+      healthCheckIntervalMs: 0,
+    })).rejects.toThrow('8 to 256 characters')
+  })
+
   it('changes the password, invalidates other sessions, and persists only a hash', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'market-admin-auth-'))
     const credentialsPath = join(directory, 'admin-credentials.json')

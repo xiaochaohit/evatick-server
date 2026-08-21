@@ -17,7 +17,7 @@ import { adminLoginHtml, adminPasswordHtml } from './admin-auth-pages.js'
 
 const scrypt = promisify(scryptCallback)
 const sessionCookie = 'market_admin_session'
-const minimumPasswordLength = 12
+const minimumPasswordLength = 8
 const maximumPasswordLength = 256
 
 interface StoredCredentials {
