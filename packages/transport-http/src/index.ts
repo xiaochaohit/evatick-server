@@ -312,8 +312,23 @@ export class EvaHttpService extends Service {
 
     this.app.get('/v1/api-keys', async () => ({
       schema: 'eva.api-key-list.v1',
+      access_mode: this.apiKeyAuth.accessMode,
       data: this.apiKeyAuth.list(),
     }))
+
+    this.app.put<{ Body: { access_mode?: string } }>('/v1/api-keys/access-mode', async (request, reply) => {
+      const accessMode = request.body?.access_mode
+      if (accessMode !== 'api-key' && accessMode !== 'public') {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-api-access-mode',
+          title: 'Invalid API access mode', status: 400, code: 'INVALID_API_ACCESS_MODE',
+          detail: 'access_mode must be either api-key or public.', retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      await this.apiKeyAuth.setAccessMode(accessMode)
+      return { schema: 'eva.api-access-mode.v1', data: { access_mode: accessMode } }
+    })
 
     this.app.post<{ Body: { name?: string } }>('/v1/api-keys', async (request, reply) => {
       try {

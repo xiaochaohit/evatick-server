@@ -39,6 +39,7 @@ describe('CLI API key authentication', () => {
       expect(pageHtml).toContain('EVA 管理中心')
       expect(pageHtml).toContain('API 密钥')
       expect(pageHtml).toContain('复制')
+      expect(pageHtml).toContain('公开访问（免密钥）')
 
       const created = await fetch(`${first.url}/v1/api-keys`, {
         method: 'POST',
@@ -69,9 +70,21 @@ describe('CLI API key authentication', () => {
       expect(revealed.status).toBe(200)
       expect(await revealed.json()).toMatchObject({ data: { key } })
 
+      const opened = await fetch(`${first.url}/v1/api-keys/access-mode`, {
+        method: 'PUT',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ access_mode: 'public' }),
+      })
+      expect(opened.status).toBe(200)
+      expect(await opened.json()).toMatchObject({ data: { access_mode: 'public' } })
+      expect((await fetch(`${first.url}/v1/health`)).status).toBe(200)
+
       const stored = await readFile(apiKeysPath, 'utf8')
       expect(stored).not.toContain(key)
-      expect(JSON.parse(stored)).toMatchObject({ schema: 'eva.api-keys.v2' })
+      expect(JSON.parse(stored)).toMatchObject({
+        schema: 'eva.api-keys.v3',
+        access_mode: 'public',
+      })
       expect((await stat(apiKeysPath)).mode & 0o777).toBe(0o600)
       expect((await stat(`${apiKeysPath}.encryption-key`)).mode & 0o777).toBe(0o600)
     } finally {
@@ -80,6 +93,16 @@ describe('CLI API key authentication', () => {
 
     const restarted = await createEvaTickServer({ apiKeysPath, healthCheckIntervalMs: 0 })
     try {
+      expect((await fetch(`${restarted.url}/v1/health`)).status).toBe(200)
+      expect(await (await fetch(`${restarted.url}/v1/api-keys`)).json()).toMatchObject({
+        access_mode: 'public',
+      })
+      expect((await fetch(`${restarted.url}/v1/api-keys/access-mode`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ access_mode: 'api-key' }),
+      })).status).toBe(200)
+      expect((await fetch(`${restarted.url}/v1/health`)).status).toBe(401)
       expect((await fetch(`${restarted.url}/v1/health`, {
         headers: { authorization: `Bearer ${key}` },
       })).status).toBe(200)

@@ -23,9 +23,12 @@ interface StoredApiKey {
 }
 
 interface StoredApiKeys {
-  schema: 'eva.api-keys.v1' | 'eva.api-keys.v2'
+  schema: 'eva.api-keys.v1' | 'eva.api-keys.v2' | 'eva.api-keys.v3'
   keys: StoredApiKey[]
+  access_mode?: ApiAccessMode
 }
+
+export type ApiAccessMode = 'api-key' | 'public'
 
 export interface ApiKeySummary {
   id: string
@@ -68,6 +71,7 @@ async function assertOwnerOnly(path: string, label: string): Promise<void> {
 
 export class ApiKeyAuth {
   private keys: StoredApiKey[] = []
+  private configuredAccessMode: ApiAccessMode = 'api-key'
   private encryptionKey: Buffer | undefined
   private readonly ready: Promise<void>
 
@@ -79,6 +83,10 @@ export class ApiKeyAuth {
     return Boolean(this.storagePath)
   }
 
+  get accessMode(): ApiAccessMode {
+    return this.enabled ? this.configuredAccessMode : 'public'
+  }
+
   async initializeForListen(): Promise<void> {
     await this.ready
   }
@@ -87,6 +95,7 @@ export class ApiKeyAuth {
     app.addHook('onRequest', async (request, reply) => {
       if (!this.enabled || !this.isCliPath(request.url.split('?', 1)[0])) return
       await this.ready
+      if (this.configuredAccessMode === 'public') return
       const token = extractBearerToken(request)
       if (token && this.authenticate(token)) return
       return problem(reply, token ? 'The API key is invalid or has been revoked.' : 'Provide an API key using the Authorization: Bearer header.')
@@ -117,6 +126,12 @@ export class ApiKeyAuth {
     this.keys.push(stored)
     await this.persist()
     return { key, summary: this.summary(stored) }
+  }
+
+  async setAccessMode(accessMode: ApiAccessMode): Promise<void> {
+    await this.ready
+    this.configuredAccessMode = accessMode
+    await this.persist()
   }
 
   async reveal(id: string): Promise<{ found: boolean; key?: string }> {
@@ -192,11 +207,16 @@ export class ApiKeyAuth {
     try {
       await assertOwnerOnly(this.storagePath, 'the API key store')
       const parsed = JSON.parse(await readFile(this.storagePath, 'utf8')) as StoredApiKeys
-      if (!['eva.api-keys.v1', 'eva.api-keys.v2'].includes(parsed.schema) || !Array.isArray(parsed.keys) ||
+      if (!['eva.api-keys.v1', 'eva.api-keys.v2', 'eva.api-keys.v3'].includes(parsed.schema) ||
+          !Array.isArray(parsed.keys) ||
+          (parsed.schema === 'eva.api-keys.v3' && !['api-key', 'public'].includes(parsed.access_mode ?? '')) ||
           parsed.keys.some((key) => !this.validStoredKey(key))) {
         throw new Error('the API key store is invalid')
       }
       this.keys = parsed.keys
+      this.configuredAccessMode = parsed.schema === 'eva.api-keys.v3'
+        ? parsed.access_mode!
+        : 'api-key'
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       await this.persist()
@@ -241,7 +261,11 @@ export class ApiKeyAuth {
     if (!this.storagePath) return
     await mkdir(dirname(this.storagePath), { recursive: true })
     const temporary = `${this.storagePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-    await writeFile(temporary, `${JSON.stringify({ schema: 'eva.api-keys.v2', keys: this.keys }, null, 2)}\n`, { mode: 0o600 })
+    await writeFile(temporary, `${JSON.stringify({
+      schema: 'eva.api-keys.v3',
+      access_mode: this.configuredAccessMode,
+      keys: this.keys,
+    }, null, 2)}\n`, { mode: 0o600 })
     await rename(temporary, this.storagePath)
   }
 }
