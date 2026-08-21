@@ -9,5 +9,8 @@ description = "Process-isolated AKShare provider bridge for Market Server"
 requires-python = ">=3.11"
 dependencies = ["akshare==1.18.82", "baostock==0.9.3"]
 
+[project.optional-dependencies]
+test = ["pytest>=9,<10"]
+
 [tool.setuptools.packages.find]
 include = ["market_server_akshare*"]

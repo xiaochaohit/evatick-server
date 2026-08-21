@@ -1,6 +1,22 @@
 # Third-party notices
 
-The bundled Market Server AKShare provider depends on [AKShare](https://github.com/akfamily/akshare), which is distributed under the MIT License. The standalone Market CLI package does not depend on AKShare.
+Market CLI is distributed under the MIT License in `LICENSE`. Its direct
+runtime dependencies are installed separately by Python or pnpm and remain
+subject to their own licenses. They are not vendored in this repository.
+
+| Dependency | Use | License |
+| --- | --- | --- |
+| [Click](https://github.com/pallets/click) | Market CLI command-line interface | BSD-3-Clause |
+| [Apache Arrow / PyArrow](https://github.com/apache/arrow) | Optional Parquet export | Apache-2.0 |
+| [AKShare](https://github.com/akfamily/akshare) | Market Server data provider | MIT |
+| [BaoStock](http://www.baostock.com) | Market Server fallback data source | BSD License, as declared by the 0.9.3 package metadata |
+| [Cordis](https://github.com/deepseek-ai/deepseek-harness/tree/main/vendor/cordis) | Market Server plugin lifecycle | MIT |
+| [DuckDB Node API](https://github.com/duckdb/duckdb-node-neo) | Local historical-data warehouse | MIT |
+| [Fastify](https://github.com/fastify/fastify) | Market Server HTTP transport | MIT |
+
+The standalone Market CLI package does not depend on AKShare or BaoStock.
+
+## AKShare license
 
 Copyright (c) 2019–2026 Albert King
 

@@ -6,6 +6,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from tests.test_cli_entrypoint import run_cli
 
 
@@ -150,3 +152,20 @@ def test_index_constituents_and_file_export_use_shared_options(tmp_path: Path) -
     assert json.loads(constituents.stdout) == [{"constituent_symbol": "600000", "rank": 1}]
     assert json.loads(exported.stdout) == {"path": str(output.resolve()), "records": 1}
     assert output.read_text() == "trading_date,close\n2026-08-14,11.11\n"
+
+
+def test_parquet_export_uses_the_server_contract(tmp_path: Path) -> None:
+    parquet = pytest.importorskip("pyarrow.parquet")
+    output = tmp_path / "bars.parquet"
+
+    with MarketServerFixture() as url:
+        exported = run_cli(
+            "--server-url", url, "stock", "bars", "--symbol", "000001",
+            "--limit", "1", "--output", str(output), "--format", "parquet",
+        )
+
+    assert exported.returncode == 0
+    assert json.loads(exported.stdout) == {"path": str(output.resolve()), "records": 1}
+    assert parquet.read_table(output).to_pylist() == [
+        {"trading_date": "2026-08-14", "close": "11.11"},
+    ]

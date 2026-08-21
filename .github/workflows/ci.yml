@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -43,7 +46,29 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install ".[test,parquet]"
-      - run: python -m pytest -q tests/test_serialization_cli.py
+      - run: >-
+          python -m pytest -q
+          tests/test_http_server_mode.py::test_parquet_export_uses_the_server_contract
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+        working-directory: server
+      - run: pnpm typecheck
+        working-directory: server
+      - run: pnpm test
+        working-directory: server
+      - run: python -m pip install "./server/providers/akshare-python[test]"
+      - run: python -m pytest -q server/providers/akshare-python/tests
 
   package:
     runs-on: ubuntu-latest

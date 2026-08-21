@@ -147,8 +147,8 @@ parameters and fields never become canonical IDs or API fields.
 ```shell
 pnpm test
 pnpm typecheck
-cd ..
-.venv/bin/python -m pytest
+providers/akshare-python/.venv/bin/python -m pip install -e './providers/akshare-python[test]'
+providers/akshare-python/.venv/bin/python -m pytest providers/akshare-python/tests
 ```
 
 ## systemd deployment
