@@ -35,13 +35,19 @@ export async function startDefaultMarketServer() {
     join(defaultDataDirectory(), 'catalog.sqlite')
   const historyPath = process.env.MARKET_SERVER_HISTORY_PATH ??
     join(defaultDataDirectory(), 'market-history.duckdb')
+  const adminCredentialsPath = process.env.MARKET_SERVER_ADMIN_CREDENTIALS_PATH ??
+    join(defaultDataDirectory(), 'admin-credentials.json')
   await mkdir(dirname(catalogPath), { recursive: true })
   await mkdir(dirname(historyPath), { recursive: true })
+  await mkdir(dirname(adminCredentialsPath), { recursive: true })
   const server = await createMarketServer({
     host: process.env.MARKET_SERVER_HOST ?? '127.0.0.1',
     port: integerFromEnvironment('MARKET_SERVER_PORT', 8765, 65_535),
     catalogPath,
     historyPath,
+    adminUsername: process.env.MARKET_SERVER_ADMIN_USERNAME ?? 'admin',
+    adminPassword: process.env.MARKET_SERVER_ADMIN_PASSWORD,
+    adminCredentialsPath,
     retryAttempts: integerFromEnvironment('MARKET_SERVER_RETRY_ATTEMPTS', 2),
     requestTimeoutMs: integerFromEnvironment('MARKET_SERVER_REQUEST_TIMEOUT_MS', 30_000),
     healthCheckIntervalMs: integerFromEnvironment(

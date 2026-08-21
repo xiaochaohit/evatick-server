@@ -83,10 +83,16 @@ Configuration uses environment variables:
 | `MARKET_SERVER_REQUEST_TIMEOUT_MS` | `30000` | Per-provider deadline |
 | `MARKET_SERVER_HEALTH_CHECK_INTERVAL_SECONDS` | `60` | Provider health-check interval; use `0` to disable |
 | `MARKET_SERVER_HEALTH_CHECK_TIMEOUT_MS` | `10000` | Deadline for one provider health check |
+| `MARKET_SERVER_ADMIN_USERNAME` | `admin` | Initial management-console account name |
+| `MARKET_SERVER_ADMIN_PASSWORD` | none | Initial password (12–256 characters); required only when the credential store does not exist |
+| `MARKET_SERVER_ADMIN_CREDENTIALS_PATH` | user data directory | Password-hash credential store; created with owner-only permissions |
 
-Keep the default loopback host unless a trusted reverse proxy supplies network
-authentication and TLS. The v1 process does not implement public-internet
-authentication.
+Before the first start, provide `MARKET_SERVER_ADMIN_PASSWORD` through the
+service environment or a secret manager. The password is used only to create a
+scrypt-derived credential store and is not written to logs. Later starts read
+that store, so the initial-password variable can be removed. The management
+console uses an HttpOnly, SameSite session cookie; keep the default loopback
+host unless a trusted reverse proxy also supplies TLS and network controls.
 
 ## HTTP API
 
@@ -128,6 +134,12 @@ uses an overlap from ten days before the latest stored bar so upstream fixes are
 applied without duplicating the `(instrument, date, adjustment)` primary key.
 The optional per-instrument delay keeps bulk synchronization single-threaded and
 rate-limited for free upstream sources.
+
+The management console redirects unauthenticated requests to `/admin/login`.
+The signed-in administrator can change the password at `/admin/password`;
+changing it invalidates all other active sessions. Console-facing data-source,
+sync, and local-warehouse endpoints require the same session when
+authentication is configured.
 
 ## Provider plugin contract
 

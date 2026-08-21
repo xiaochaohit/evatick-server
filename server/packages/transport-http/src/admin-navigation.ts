@@ -9,7 +9,9 @@ export const adminNavigationStyles = String.raw`
   .admin-nav a.active { color:#6edbb7; }
   .admin-nav a.active::after { content:""; position:absolute; left:15px; right:15px; bottom:0; height:2px; background:#59d6ad; box-shadow:0 0 10px rgba(89,214,173,.65); }
   .nav-icon { width:20px; height:20px; display:grid; place-items:center; border:1px solid rgba(142,184,170,.18); border-radius:6px; font:500 10px "DM Mono",monospace; }
-  .topbar-meta { margin-left:auto; display:flex; align-items:center; gap:8px; color:#73877f; font:500 10px "DM Mono",monospace; letter-spacing:.08em; }
+  .topbar-meta { margin-left:auto; display:flex; align-items:center; gap:12px; color:#73877f; font:500 10px "DM Mono",monospace; letter-spacing:.08em; }
+  .account-link,.logout-button { color:#82968f; background:transparent; border:0; padding:6px 0; cursor:pointer; text-decoration:none; font:600 11px "Noto Sans SC",sans-serif; letter-spacing:0; }
+  .account-link:hover,.logout-button:hover { color:#59d6ad; }
   .online-dot { width:7px; height:7px; border-radius:50%; background:#59d6ad; box-shadow:0 0 0 5px rgba(89,214,173,.08); }
   .utility-strip { border-top:1px solid rgba(136,190,173,.07); background:#081512; }
   .utility-inner { width:min(1240px,calc(100% - 40px)); height:30px; margin:auto; display:flex; align-items:center; gap:18px; color:#62776f; font:500 10px "DM Mono",monospace; }
@@ -25,8 +27,8 @@ export const adminNavigationStyles = String.raw`
   }
 `
 
-export function adminNavigation(active: 'sources' | 'sync'): string {
-  const item = (id: 'sources' | 'sync', href: string, icon: string, label: string) =>
+export function adminNavigation(active: 'sources' | 'sync' | 'account'): string {
+  const item = (id: 'sources' | 'sync' | 'account', href: string, icon: string, label: string) =>
     `<a${active === id ? ' class="active" aria-current="page"' : ''} href="${href}"><span class="nav-icon">${icon}</span>${label}</a>`
   return `<div class="site-header">
     <div class="topbar">
@@ -35,8 +37,8 @@ export function adminNavigation(active: 'sources' | 'sync'): string {
         ${item('sources', '/admin/data-sources', '01', '数据源健康')}
         ${item('sync', '/admin/data-sync', '02', '数据同步')}
       </nav>
-      <div class="topbar-meta"><span class="online-dot"></span>LOCAL SERVICE</div>
+      <div class="topbar-meta"><span class="online-dot"></span>LOCAL SERVICE<a class="account-link" href="/admin/password">修改密码</a><button class="logout-button" id="admin-logout" type="button">退出</button></div>
     </div>
     <div class="utility-strip"><div class="utility-inner"><span>MARKET SERVER</span><span>DATA OPERATIONS</span><span>127.0.0.1:8878</span></div></div>
-  </div>`
+  </div><script>document.getElementById('admin-logout')?.addEventListener('click',async()=>{await fetch('/admin/session',{method:'DELETE'});location.assign('/admin/login')})</script>`
 }

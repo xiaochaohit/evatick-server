@@ -26,6 +26,9 @@ export interface MarketServerOptions {
   healthCheckTimeoutMs?: number
   catalogPath?: string
   historyPath?: string
+  adminUsername?: string
+  adminPassword?: string
+  adminCredentialsPath?: string
   host?: string
   port?: number
 }

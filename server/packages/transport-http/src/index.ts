@@ -22,6 +22,7 @@ import type {
   MarketProviderRegistry,
 } from '@market-cli/cordis-runtime'
 
+import { AdminAuth } from './admin-auth.js'
 import { dataSourceDashboardHtml } from './data-source-dashboard.js'
 import { DataSyncManager } from './data-sync-manager.js'
 import { dataSyncDashboardHtml } from './data-sync-dashboard.js'
@@ -71,6 +72,7 @@ export class MarketHttpService extends Service {
   private readonly app: FastifyInstance
   private readonly healthMonitor: ProviderHealthMonitor
   private readonly dataSyncManager: DataSyncManager
+  private readonly adminAuth: AdminAuth
   private address: string | undefined
 
   constructor(
@@ -81,6 +83,9 @@ export class MarketHttpService extends Service {
       healthCheckIntervalMs?: number
       healthCheckTimeoutMs?: number
       historyPath?: string
+      adminUsername?: string
+      adminPassword?: string
+      adminCredentialsPath?: string
     } = {},
   ) {
     super(ctx, 'marketHttp')
@@ -119,6 +124,13 @@ export class MarketHttpService extends Service {
           request_id: `req_${randomUUID()}`,
         })
     })
+
+    this.adminAuth = new AdminAuth({
+      username: this.config.adminUsername,
+      initialPassword: this.config.adminPassword,
+      credentialsPath: this.config.adminCredentialsPath,
+    })
+    this.adminAuth.install(this.app)
 
     const routingOptions = {
       retryAttempts: Math.max(this.config.retryAttempts ?? 2, 1),
@@ -965,6 +977,7 @@ export class MarketHttpService extends Service {
 
   async listen(host = '127.0.0.1', port = 0): Promise<string> {
     if (!this.address) {
+      await this.adminAuth.initializeForListen()
       this.address = await this.app.listen({ host, port })
     }
     return this.address
