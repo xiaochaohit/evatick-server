@@ -1,0 +1,9 @@
+{
+  "name": "@evatick/catalog-sqlite",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@evatick/core": "workspace:*"
+  }
+}

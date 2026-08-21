@@ -1,0 +1,10 @@
+{
+  "name": "@evatick/cordis-runtime",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@evatick/core": "workspace:*"
+  }
+}

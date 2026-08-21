@@ -9,73 +9,20 @@ permissions:
 
 jobs:
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python: "3.11"
-          - os: ubuntu-latest
-            python: "3.12"
-          - os: ubuntu-latest
-            python: "3.13"
-          - os: ubuntu-latest
-            python: "3.14"
-          - os: macos-latest
-            python: "3.11"
-          - os: macos-latest
-            python: "3.14"
-          - os: windows-latest
-            python: "3.11"
-          - os: windows-latest
-            python: "3.14"
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - run: python -m pip install ".[test]"
-      - run: python -m pytest -q
-
-  parquet:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: python -m pip install ".[test,parquet]"
-      - run: >-
-          python -m pytest -q
-          tests/test_http_server_mode.py::test_parquet_export_uses_the_server_contract
-
-  server:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11.7.0"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
-        working-directory: server
       - run: pnpm typecheck
-        working-directory: server
       - run: pnpm test
-        working-directory: server
-      - run: python -m pip install "./server/providers/akshare-python[test]"
-      - run: python -m pytest -q server/providers/akshare-python/tests
-
-  package:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: python -m pip install build
-      - run: python -m build
+      - run: python -m pip install "./providers/akshare-python[test]"
+      - run: python -m pytest -q providers/akshare-python/tests

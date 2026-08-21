@@ -1,20 +1,16 @@
 # Third-party notices
 
-Market CLI is distributed under the MIT License in `LICENSE`. Its direct
+EVA Tick Server is distributed under the MIT License in `LICENSE`. Its direct
 runtime dependencies are installed separately by Python or pnpm and remain
 subject to their own licenses. They are not vendored in this repository.
 
 | Dependency | Use | License |
 | --- | --- | --- |
-| [Click](https://github.com/pallets/click) | Market CLI command-line interface | BSD-3-Clause |
-| [Apache Arrow / PyArrow](https://github.com/apache/arrow) | Optional Parquet export | Apache-2.0 |
-| [AKShare](https://github.com/akfamily/akshare) | Market Server data provider | MIT |
-| [BaoStock](http://www.baostock.com) | Market Server fallback data source | BSD License, as declared by the 0.9.3 package metadata |
-| [Cordis](https://github.com/deepseek-ai/deepseek-harness/tree/main/vendor/cordis) | Market Server plugin lifecycle | MIT |
+| [AKShare](https://github.com/akfamily/akshare) | EVA Tick Server data provider | MIT |
+| [BaoStock](http://www.baostock.com) | EVA Tick Server fallback data source | BSD License, as declared by the 0.9.3 package metadata |
+| [Cordis](https://github.com/deepseek-ai/deepseek-harness/tree/main/vendor/cordis) | EVA Tick Server plugin lifecycle | MIT |
 | [DuckDB Node API](https://github.com/duckdb/duckdb-node-neo) | Local historical-data warehouse | MIT |
-| [Fastify](https://github.com/fastify/fastify) | Market Server HTTP transport | MIT |
-
-The standalone Market CLI package does not depend on AKShare or BaoStock.
+| [Fastify](https://github.com/fastify/fastify) | EVA Tick Server HTTP transport | MIT |
 
 ## AKShare license
 

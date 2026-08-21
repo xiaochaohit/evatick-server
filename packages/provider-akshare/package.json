@@ -1,0 +1,9 @@
+{
+  "name": "@evatick/provider-akshare",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@evatick/core": "workspace:*"
+  }
+}

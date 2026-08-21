@@ -1,0 +1,13 @@
+{
+  "name": "@evatick/transport-http",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@duckdb/node-api": "1.5.5-r.4",
+    "@evatick/core": "workspace:*",
+    "@evatick/cordis-runtime": "workspace:*",
+    "fastify": "5.12.0"
+  }
+}

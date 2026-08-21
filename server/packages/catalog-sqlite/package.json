@@ -1,9 +1,0 @@
-{
-  "name": "@market-cli/catalog-sqlite",
-  "private": true,
-  "type": "module",
-  "exports": "./src/index.ts",
-  "dependencies": {
-    "@market-cli/core": "workspace:*"
-  }
-}

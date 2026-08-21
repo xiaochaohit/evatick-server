@@ -1,0 +1,17 @@
+{
+  "name": "@evatick/server",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@evatick/catalog-sqlite": "workspace:*",
+    "@evatick/core": "workspace:*",
+    "@evatick/provider-akshare": "workspace:*",
+    "@evatick/cordis-runtime": "workspace:*",
+    "@evatick/transport-http": "workspace:*"
+  }
+}

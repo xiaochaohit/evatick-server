@@ -1,0 +1,26 @@
+{
+  "schema": "market.server-config.v1",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8765,
+    "retryAttempts": 2,
+    "requestTimeoutMs": 30000,
+    "healthCheckIntervalSeconds": 3600,
+    "healthCheckTimeoutMs": 30000
+  },
+  "storage": {
+    "catalogPath": "/var/lib/evatick-server/catalog.sqlite",
+    "historyPath": "/var/lib/evatick-server/market-history.duckdb"
+  },
+  "admin": {
+    "username": "admin",
+    "initialPassword": "<set-in-private-config>",
+    "credentialsPath": "/var/lib/evatick-server/admin-credentials.json",
+    "apiKeysPath": "/var/lib/evatick-server/api-keys.json"
+  },
+  "providers": {
+    "akshare": {
+      "pythonExecutable": "/opt/evatick-server/providers/akshare-python/.venv/bin/python"
+    }
+  }
+}

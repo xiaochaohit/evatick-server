@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evatick-server-akshare"
+version = "0.1.0"
+description = "Process-isolated AKShare provider bridge for EVA Tick Server"
+requires-python = ">=3.11"
+dependencies = ["akshare==1.18.82", "baostock==0.9.3"]
+
+[project.optional-dependencies]
+test = ["pytest>=9,<10"]
+
+[tool.setuptools.packages.find]
+include = ["evatick_server_akshare*"]
