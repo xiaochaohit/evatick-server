@@ -47,8 +47,11 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
     .detail.visible { display:block; }
     .detail-head { display:flex; align-items:flex-start; justify-content:space-between; padding:20px 22px; border-bottom:1px solid var(--line); }
     .detail-title { font-size:18px; font-weight:700; } .detail-note { margin-top:4px; }
-    .detail-controls { display:grid; grid-template-columns:160px 210px 1fr; gap:10px; align-items:end; padding:16px 22px; border-bottom:1px solid var(--line); }
-    .control label { display:block; color:var(--muted); font-size:10px; margin-bottom:6px; letter-spacing:.06em; }
+    .detail-controls { display:grid; grid-template-columns:160px 210px 1fr; gap:10px; align-items:start; padding:16px 22px; border-bottom:1px solid var(--line); }
+    .control { min-width:0; display:grid; grid-template-rows:18px 42px; gap:6px; }
+    .control label { display:block; height:18px; margin:0; color:var(--muted); font-size:10px; line-height:18px; letter-spacing:.06em; }
+    .control > input,.control > select { height:42px; min-height:42px; }
+    .detail-controls > .mono { align-self:end; min-height:42px; display:flex; align-items:center; }
     .coverage-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line); border-bottom:1px solid var(--line); }
     .coverage-card { min-height:92px; padding:16px 18px; background:#0d1b17; }
     .coverage-label { color:var(--muted); font-size:10px; margin-bottom:9px; }
