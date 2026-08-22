@@ -226,6 +226,7 @@ export class DataSyncManager {
   private execution: Promise<void> | null = null
   private readonly scheduleTimers = new Map<number, ReturnType<typeof setTimeout>>()
   private readonly schedules = new Map<number, DataSyncSchedule>()
+  private pendingScheduleIds: number[] = []
 
   constructor(private readonly dependencies: DataSyncDependencies) {
     this.ready = this.initialize()
@@ -312,6 +313,7 @@ export class DataSyncManager {
     if (timer) clearTimeout(timer)
     this.scheduleTimers.delete(scheduleId)
     this.schedules.delete(scheduleId)
+    this.pendingScheduleIds = this.pendingScheduleIds.filter((id) => id !== scheduleId)
     await this.db.run('DELETE FROM sync_schedule WHERE id = $schedule_id', {
       schedule_id: scheduleId,
     })
@@ -720,6 +722,7 @@ export class DataSyncManager {
       })
       .finally(() => {
         this.execution = null
+        void this.runNextScheduledTask()
       })
   }
 
@@ -1117,25 +1120,32 @@ export class DataSyncManager {
     this.schedules.set(scheduleId, { ...schedule, last_triggered_at: new Date().toISOString() })
     this.configureScheduleTimer(scheduleId)
     await this.persistSchedule(scheduleId)
+    if (!this.pendingScheduleIds.includes(scheduleId)) this.pendingScheduleIds.push(scheduleId)
+    await this.runNextScheduledTask()
+  }
+
+  private async runNextScheduledTask(): Promise<void> {
     if (this.activeRun) return
-    const current = this.schedules.get(scheduleId)
-    if (!current) return
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
-    const start = current.interval === '1m'
-      ? subtractDays(today, 92)
-      : '1990-01-01'
-    try {
-      await this.start({
-        instrumentTypes: current.instrument_types,
-        interval: current.interval,
-        start,
-        end: today,
-        adjustment: current.adjustment,
-        delayMs: current.delay_ms,
-        lookbackDays: current.lookback_days,
-      })
-    } catch (error) {
-      process.stderr.write(`[data-sync-schedule] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
+    while (this.pendingScheduleIds.length > 0) {
+      const scheduleId = this.pendingScheduleIds.shift()!
+      const schedule = this.schedules.get(scheduleId)
+      if (!schedule) continue
+      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
+      const start = schedule.interval === '1m' ? subtractDays(today, 92) : '1990-01-01'
+      try {
+        await this.start({
+          instrumentTypes: schedule.instrument_types,
+          interval: schedule.interval,
+          start,
+          end: today,
+          adjustment: schedule.adjustment,
+          delayMs: schedule.delay_ms,
+          lookbackDays: schedule.lookback_days,
+        })
+        return
+      } catch (error) {
+        process.stderr.write(`[data-sync-schedule] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
+      }
     }
   }
 
