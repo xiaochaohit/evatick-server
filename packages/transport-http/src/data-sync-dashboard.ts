@@ -59,8 +59,11 @@ export const dataSyncDashboardHtml = String.raw`<!doctype html>
     .storage strong { color:var(--ink); }
     .schedule-panel { margin-top:14px; padding:24px; }
     .schedule-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:20px; }
-    .schedule-grid { display:grid; grid-template-columns:1.2fr .8fr 1fr 1fr 1fr 1fr; gap:10px; align-items:end; }
-    .schedule-grid .field { margin:0; }
+    .schedule-grid { display:grid; grid-template-columns:1.2fr .8fr 1fr 1fr 1fr 1fr; gap:10px; align-items:start; }
+    .schedule-grid .field { min-width:0; margin:0; display:grid; grid-template-rows:18px 42px; gap:8px; }
+    .schedule-grid .field > label:first-child { height:18px; margin:0; line-height:18px; white-space:nowrap; }
+    .schedule-grid .field > input,.schedule-grid .field > select,.schedule-grid .checks,.schedule-grid .check { min-height:42px; }
+    .schedule-grid .check { margin:0; }
     .schedule-save { width:auto; margin:0; min-height:42px; }
     .schedule-state { color:var(--green); font:500 11px "DM Mono",monospace; text-align:right; }
     .scheduled { margin-top:26px; border-top:1px solid var(--line); padding-top:22px; }
