@@ -105,6 +105,49 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/data-sync/schedules:
+    post:
+      operationId: createDataSyncSchedule
+      summary: Create a daily recurring synchronization task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataSyncScheduleRequest'
+      responses:
+        '201':
+          description: Scheduled synchronization task created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSyncScheduleResponse'
+        default:
+          description: Invalid schedule configuration.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data-sync/schedules/{scheduleId}:
+    delete:
+      operationId: deleteDataSyncSchedule
+      summary: Revoke a scheduled synchronization task
+      parameters:
+        - in: path
+          name: scheduleId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '204':
+          description: Scheduled synchronization task revoked.
+        default:
+          description: Invalid schedule identifier or task not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/data-sync/cancel:
     post:
       operationId: cancelDataSyncRun
@@ -555,6 +598,63 @@ components:
           const: eva.data-sync-run.v1
         data:
           $ref: '#/components/schemas/DataSyncRun'
+    DataSyncScheduleRequest:
+      type: object
+      additionalProperties: false
+      required: [interval, time, skip_weekends, instrument_types, lookback_days, adjustment, delay_ms]
+      properties:
+        interval:
+          type: string
+          enum: [1m, 1d]
+        time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+        skip_weekends:
+          type: boolean
+        instrument_types:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [equity, index]
+        lookback_days:
+          type: integer
+          minimum: 1
+          maximum: 90
+        adjustment:
+          $ref: '#/components/schemas/PriceAdjustment'
+        delay_ms:
+          type: integer
+          minimum: 0
+          maximum: 10000
+    DataSyncSchedule:
+      allOf:
+        - $ref: '#/components/schemas/DataSyncScheduleRequest'
+        - type: object
+          required: [schedule_id, enabled, next_run_at, last_triggered_at]
+          properties:
+            schedule_id:
+              type: integer
+              minimum: 1
+            enabled:
+              const: true
+            next_run_at:
+              type: string
+              format: date-time
+            last_triggered_at:
+              oneOf:
+                - type: 'null'
+                - type: string
+                  format: date-time
+    DataSyncScheduleResponse:
+      type: object
+      additionalProperties: false
+      required: [schema, data]
+      properties:
+        schema:
+          const: eva.data-sync-schedule.v1
+        data:
+          $ref: '#/components/schemas/DataSyncSchedule'
     DataSyncStatusResponse:
       type: object
       additionalProperties: false
@@ -565,7 +665,7 @@ components:
         data:
           type: object
           additionalProperties: true
-          required: [database_path, storage, active_run, last_run]
+          required: [database_path, storage, active_run, last_run, schedules]
           properties:
             database_path:
               type: string
@@ -580,6 +680,10 @@ components:
               oneOf:
                 - type: 'null'
                 - $ref: '#/components/schemas/DataSyncRun'
+            schedules:
+              type: array
+              items:
+                $ref: '#/components/schemas/DataSyncSchedule'
         generated_at:
           type: string
           format: date-time

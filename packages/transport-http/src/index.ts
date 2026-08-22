@@ -610,9 +610,8 @@ export class EvaHttpService extends Service {
       }
     })
 
-    this.app.put<{
+    this.app.post<{
       Body: {
-        enabled?: boolean
         interval?: '1m' | '1d'
         time?: string
         skip_weekends?: boolean
@@ -621,9 +620,8 @@ export class EvaHttpService extends Service {
         adjustment?: PriceAdjustment
         delay_ms?: number
       }
-    }>('/v1/data-sync/schedule', async (request, reply) => {
+    }>('/v1/data-sync/schedules', async (request, reply) => {
       const body = request.body
-      const enabled = body?.enabled ?? false
       const interval = body?.interval ?? '1d'
       const time = body?.time
       const skipWeekends = body?.skip_weekends ?? false
@@ -645,16 +643,39 @@ export class EvaHttpService extends Service {
           type: 'urn:eva:problem:invalid-data-sync-schedule',
           title: 'Invalid data sync schedule', status: 400,
           code: 'INVALID_DATA_SYNC_SCHEDULE',
-          detail: 'enabled, interval, time, skip_weekends, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
+          detail: 'interval, time, skip_weekends, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }
-      const schedule = await this.dataSyncManager.updateSchedule({
-        enabled, interval, time, skip_weekends: skipWeekends,
+      const schedule = await this.dataSyncManager.createSchedule({
+        enabled: true, interval, time, skip_weekends: skipWeekends,
         instrument_types: instrumentTypes, lookback_days: lookbackDays!,
         adjustment, delay_ms: delayMs!,
       })
-      return { schema: 'eva.data-sync-schedule.v1', data: schedule }
+      return reply.code(201).send({ schema: 'eva.data-sync-schedule.v1', data: schedule })
+    })
+
+    this.app.delete<{
+      Params: { scheduleId: string }
+    }>('/v1/data-sync/schedules/:scheduleId', async (request, reply) => {
+      const scheduleId = Number(request.params.scheduleId)
+      if (!Number.isInteger(scheduleId) || scheduleId < 1) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-data-sync-schedule-id',
+          title: 'Invalid data sync schedule ID', status: 400,
+          code: 'INVALID_DATA_SYNC_SCHEDULE_ID', detail: 'scheduleId must be a positive integer.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      if (!await this.dataSyncManager.deleteSchedule(scheduleId)) {
+        return reply.code(404).type('application/problem+json').send({
+          type: 'urn:eva:problem:data-sync-schedule-not-found',
+          title: 'Data sync schedule not found', status: 404,
+          code: 'DATA_SYNC_SCHEDULE_NOT_FOUND', detail: 'The scheduled data sync task does not exist.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      return reply.code(204).send()
     })
 
     this.app.get('/v1/data-sources', async (_request, reply) => {

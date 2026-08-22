@@ -74,10 +74,11 @@ export interface DataSyncStatus {
   }
   active_run: DataSyncRun | null
   last_run: DataSyncRun | null
-  schedule: DataSyncSchedule
+  schedules: readonly DataSyncSchedule[]
 }
 
 export interface DataSyncSchedule {
+  schedule_id: number
   enabled: boolean
   interval: DataSyncInterval
   time: string
@@ -223,19 +224,8 @@ export class DataSyncManager {
   private lastRun: DataSyncRun | null = null
   private cancelled = false
   private execution: Promise<void> | null = null
-  private scheduleTimer: ReturnType<typeof setTimeout> | undefined
-  private schedule: DataSyncSchedule = {
-    enabled: false,
-    interval: '1d',
-    time: '18:00',
-    skip_weekends: false,
-    instrument_types: ['equity', 'index'],
-    lookback_days: 10,
-    adjustment: 'none',
-    delay_ms: 750,
-    next_run_at: null,
-    last_triggered_at: null,
-  }
+  private readonly scheduleTimers = new Map<number, ReturnType<typeof setTimeout>>()
+  private readonly schedules = new Map<number, DataSyncSchedule>()
 
   constructor(private readonly dependencies: DataSyncDependencies) {
     this.ready = this.initialize()
@@ -277,7 +267,8 @@ export class DataSyncManager {
       },
       active_run: this.activeRun,
       last_run: this.lastRun,
-      schedule: this.schedule,
+      schedules: [...this.schedules.values()].sort((left, right) =>
+        (left.next_run_at ?? '').localeCompare(right.next_run_at ?? '')),
     }
   }
 
@@ -297,16 +288,34 @@ export class DataSyncManager {
     return sizes.reduce((sum, size) => sum + size, 0)
   }
 
-  async updateSchedule(schedule: Omit<DataSyncSchedule, 'next_run_at' | 'last_triggered_at'>): Promise<DataSyncSchedule> {
+  async createSchedule(
+    schedule: Omit<DataSyncSchedule, 'schedule_id' | 'next_run_at' | 'last_triggered_at'>,
+  ): Promise<DataSyncSchedule> {
     await this.ready
-    this.schedule = {
+    const scheduleId = Math.max(0, ...this.schedules.keys()) + 1
+    const created: DataSyncSchedule = {
       ...schedule,
+      schedule_id: scheduleId,
       next_run_at: null,
-      last_triggered_at: this.schedule.last_triggered_at,
+      last_triggered_at: null,
     }
-    this.configureScheduleTimer()
-    await this.persistSchedule()
-    return this.schedule
+    this.schedules.set(scheduleId, created)
+    this.configureScheduleTimer(scheduleId)
+    await this.persistSchedule(scheduleId)
+    return this.schedules.get(scheduleId)!
+  }
+
+  async deleteSchedule(scheduleId: number): Promise<boolean> {
+    await this.ready
+    if (!this.schedules.has(scheduleId)) return false
+    const timer = this.scheduleTimers.get(scheduleId)
+    if (timer) clearTimeout(timer)
+    this.scheduleTimers.delete(scheduleId)
+    this.schedules.delete(scheduleId)
+    await this.db.run('DELETE FROM sync_schedule WHERE id = $schedule_id', {
+      schedule_id: scheduleId,
+    })
+    return true
   }
 
   async browseInstruments(request: {
@@ -907,7 +916,8 @@ export class DataSyncManager {
 
   async close(): Promise<void> {
     await this.ready
-    if (this.scheduleTimer) clearTimeout(this.scheduleTimer)
+    for (const timer of this.scheduleTimers.values()) clearTimeout(timer)
+    this.scheduleTimers.clear()
     this.cancelled = true
     await this.execution
     this.connection?.closeSync()
@@ -1058,65 +1068,84 @@ export class DataSyncManager {
       }
     }
     const scheduleReader = await this.db.runAndReadAll(`
-      SELECT payload::VARCHAR AS payload FROM sync_schedule WHERE id = 1
+      SELECT id, payload::VARCHAR AS payload FROM sync_schedule ORDER BY id
     `)
-    const schedulePayload = scheduleReader.getRowObjectsJson()[0]?.payload
-    if (typeof schedulePayload === 'string') {
-      const stored = JSON.parse(schedulePayload) as Partial<DataSyncSchedule> & { start?: string }
+    for (const row of scheduleReader.getRowObjectsJson()) {
+      if (typeof row.payload !== 'string') continue
+      const stored = JSON.parse(row.payload) as Partial<DataSyncSchedule> & { start?: string }
+      if (stored.enabled === false) continue
       const { start: _legacyStart, ...current } = stored
-      this.schedule = {
-        ...this.schedule,
+      const scheduleId = Number(row.id)
+      this.schedules.set(scheduleId, {
+        schedule_id: scheduleId,
+        enabled: true,
+        time: '18:00',
+        instrument_types: ['equity', 'index'],
+        adjustment: 'none',
+        delay_ms: 750,
+        next_run_at: null,
+        last_triggered_at: null,
         ...current,
         interval: stored.interval ?? '1d',
         skip_weekends: stored.skip_weekends ?? false,
         lookback_days: stored.lookback_days ?? 10,
-      }
+      })
     }
-    this.configureScheduleTimer()
+    for (const scheduleId of this.schedules.keys()) this.configureScheduleTimer(scheduleId)
   }
 
-  private configureScheduleTimer(): void {
-    if (this.scheduleTimer) clearTimeout(this.scheduleTimer)
-    this.scheduleTimer = undefined
-    if (!this.schedule.enabled) {
-      this.schedule = { ...this.schedule, next_run_at: null }
+  private configureScheduleTimer(scheduleId: number): void {
+    const existingTimer = this.scheduleTimers.get(scheduleId)
+    if (existingTimer) clearTimeout(existingTimer)
+    this.scheduleTimers.delete(scheduleId)
+    const schedule = this.schedules.get(scheduleId)
+    if (!schedule) return
+    if (!schedule.enabled) {
+      this.schedules.set(scheduleId, { ...schedule, next_run_at: null })
       return
     }
-    const next = nextDataSyncRun(new Date(), this.schedule.time, this.schedule.skip_weekends)
-    this.schedule = { ...this.schedule, next_run_at: next.toISOString() }
-    this.scheduleTimer = setTimeout(() => void this.triggerSchedule(), next.getTime() - Date.now())
-    this.scheduleTimer.unref()
+    const next = nextDataSyncRun(new Date(), schedule.time, schedule.skip_weekends)
+    this.schedules.set(scheduleId, { ...schedule, next_run_at: next.toISOString() })
+    const timer = setTimeout(() => void this.triggerSchedule(scheduleId), next.getTime() - Date.now())
+    timer.unref()
+    this.scheduleTimers.set(scheduleId, timer)
   }
 
-  private async triggerSchedule(): Promise<void> {
-    this.schedule = { ...this.schedule, last_triggered_at: new Date().toISOString() }
-    this.configureScheduleTimer()
-    await this.persistSchedule()
+  private async triggerSchedule(scheduleId: number): Promise<void> {
+    const schedule = this.schedules.get(scheduleId)
+    if (!schedule) return
+    this.schedules.set(scheduleId, { ...schedule, last_triggered_at: new Date().toISOString() })
+    this.configureScheduleTimer(scheduleId)
+    await this.persistSchedule(scheduleId)
     if (this.activeRun) return
+    const current = this.schedules.get(scheduleId)
+    if (!current) return
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
-    const start = this.schedule.interval === '1m'
+    const start = current.interval === '1m'
       ? subtractDays(today, 92)
       : '1990-01-01'
     try {
       await this.start({
-        instrumentTypes: this.schedule.instrument_types,
-        interval: this.schedule.interval,
+        instrumentTypes: current.instrument_types,
+        interval: current.interval,
         start,
         end: today,
-        adjustment: this.schedule.adjustment,
-        delayMs: this.schedule.delay_ms,
-        lookbackDays: this.schedule.lookback_days,
+        adjustment: current.adjustment,
+        delayMs: current.delay_ms,
+        lookbackDays: current.lookback_days,
       })
     } catch (error) {
       process.stderr.write(`[data-sync-schedule] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
     }
   }
 
-  private async persistSchedule(): Promise<void> {
+  private async persistSchedule(scheduleId: number): Promise<void> {
+    const schedule = this.schedules.get(scheduleId)
+    if (!schedule) return
     await this.db.run(`
-      INSERT INTO sync_schedule VALUES (1, $payload::JSON, current_timestamp)
+      INSERT INTO sync_schedule VALUES ($schedule_id, $payload::JSON, current_timestamp)
       ON CONFLICT (id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
-    `, { payload: JSON.stringify(this.schedule) })
+    `, { schedule_id: scheduleId, payload: JSON.stringify(schedule) })
   }
 
   private async execute(

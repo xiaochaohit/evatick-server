@@ -295,6 +295,9 @@ describe('local historical data synchronization', () => {
       expect(page).toContain('<option value="1m" selected>1 分钟</option>')
       expect(page).toContain("button.textContent='正在提交…'")
       expect(page).toContain("button.textContent='同步中'")
+      expect(page).toContain('当前定时任务')
+      expect(page).toContain('添加定时任务')
+      expect(page).toContain('data-schedule-id')
       expect(page).toContain('aria-label="管理目录"')
       expect(page).toContain('href="/admin"')
       expect(page).toContain('class="active" aria-current="page" href="/admin/data-sync"')
@@ -309,36 +312,94 @@ describe('local historical data synchronization', () => {
       expect(browserPage).toContain('每日分钟完整性')
       expect(browserPage).toContain('class="active" aria-current="page" href="/admin"')
 
-      const scheduleResponse = await fetch(`${server.url}/v1/data-sync/schedule`, {
-        method: 'PUT', headers: { 'content-type': 'application/json' },
+      const dailyScheduleResponse = await fetch(`${server.url}/v1/data-sync/schedules`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          enabled: true, interval: '1m', time: '23:59', skip_weekends: true,
+          interval: '1d', time: '18:00', skip_weekends: true,
           instrument_types: ['equity', 'index'],
           lookback_days: 10, adjustment: 'none', delay_ms: 750,
         }),
       })
-      expect(scheduleResponse.status).toBe(200)
-      expect(await scheduleResponse.json()).toMatchObject({
+      expect(dailyScheduleResponse.status).toBe(201)
+      const dailySchedule = await dailyScheduleResponse.json() as {
+        data: { schedule_id: number }
+      }
+      expect(dailySchedule).toMatchObject({
         data: {
-          enabled: true, interval: '1m', time: '23:59', skip_weekends: true,
+          schedule_id: 1, enabled: true, interval: '1d', time: '18:00', skip_weekends: true,
           lookback_days: 10, next_run_at: expect.any(String),
         },
       })
-      const status = await fetch(`${server.url}/v1/data-sync`).then((result) => result.json())
-      expect(status).toMatchObject({
-        data: { schedule: { enabled: true, interval: '1m', time: '23:59', skip_weekends: true } },
+      const minuteScheduleResponse = await fetch(`${server.url}/v1/data-sync/schedules`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          interval: '1m', time: '23:59', skip_weekends: true,
+          instrument_types: ['equity'],
+          lookback_days: 3, adjustment: 'none', delay_ms: 750,
+        }),
+      })
+      expect(minuteScheduleResponse.status).toBe(201)
+      expect(await minuteScheduleResponse.json()).toMatchObject({
+        data: { schedule_id: 2, interval: '1m', time: '23:59', next_run_at: expect.any(String) },
+      })
+      const status = await fetch(`${server.url}/v1/data-sync`).then((result) => result.json()) as {
+        data: { schedules: unknown[] }
+      }
+      expect(status.data.schedules).toEqual(expect.arrayContaining([
+          expect.objectContaining({ schedule_id: 1, interval: '1d', time: '18:00' }),
+          expect.objectContaining({ schedule_id: 2, interval: '1m', time: '23:59' }),
+      ]))
+
+      const deleted = await fetch(
+        `${server.url}/v1/data-sync/schedules/${dailySchedule.data.schedule_id}`,
+        { method: 'DELETE' },
+      )
+      expect(deleted.status).toBe(204)
+      const afterDelete = await fetch(`${server.url}/v1/data-sync`).then((result) => result.json())
+      expect(afterDelete).toMatchObject({
+        data: { schedules: [{ schedule_id: 2, interval: '1m' }] },
       })
 
-      const invalidSchedule = await fetch(`${server.url}/v1/data-sync/schedule`, {
-        method: 'PUT', headers: { 'content-type': 'application/json' },
+      const invalidSchedule = await fetch(`${server.url}/v1/data-sync/schedules`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          enabled: true, interval: '1m', time: '23:59', skip_weekends: true, instrument_types: ['equity'],
+          interval: '1m', time: '23:59', skip_weekends: true, instrument_types: ['equity'],
           lookback_days: 0, adjustment: 'none', delay_ms: 750,
         }),
       })
       expect(invalidSchedule.status).toBe(400)
     } finally {
       await server.close()
+    }
+  })
+
+  it('persists multiple scheduled sync tasks across restarts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'eva-data-schedules-'))
+    const historyPath = join(directory, 'history.duckdb')
+    let server = await createEvaTickServer({ historyPath, healthCheckIntervalMs: 0 })
+    try {
+      for (const [interval, time] of [['1d', '18:00'], ['1m', '19:00']] as const) {
+        const response = await fetch(`${server.url}/v1/data-sync/schedules`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            interval, time, skip_weekends: true, instrument_types: ['equity'],
+            lookback_days: 10, adjustment: 'none', delay_ms: 750,
+          }),
+        })
+        expect(response.status).toBe(201)
+      }
+      await server.close()
+
+      server = await createEvaTickServer({ historyPath, healthCheckIntervalMs: 0 })
+      const status = await fetch(`${server.url}/v1/data-sync`).then((response) => response.json()) as {
+        data: { schedules: { interval: string; next_run_at: string | null }[] }
+      }
+      expect(status.data.schedules).toHaveLength(2)
+      expect(status.data.schedules.map((schedule) => schedule.interval).sort()).toEqual(['1d', '1m'])
+      expect(status.data.schedules.every((schedule) => schedule.next_run_at !== null)).toBe(true)
+    } finally {
+      await server.close()
+      await rm(directory, { recursive: true, force: true })
     }
   })
 
