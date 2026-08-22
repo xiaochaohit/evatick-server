@@ -85,7 +85,7 @@ paths:
   /v1/data-sync/runs:
     post:
       operationId: startDataSyncRun
-      summary: Start a background daily-bar synchronization run
+      summary: Start a background daily or one-minute bar synchronization run
       requestBody:
         required: true
         content:
@@ -497,6 +497,10 @@ components:
           items:
             type: string
             enum: [equity, index]
+        interval:
+          type: string
+          enum: [1m, 1d]
+          default: 1d
         start:
           type: string
           format: date
@@ -516,7 +520,7 @@ components:
     DataSyncRun:
       type: object
       additionalProperties: true
-      required: [run_id, status, total, completed, succeeded, failed, bars_written]
+      required: [run_id, status, interval, total, completed, succeeded, failed, bars_written]
       properties:
         run_id:
           type: string
@@ -524,6 +528,9 @@ components:
         status:
           type: string
           enum: [running, completed, completed_with_errors, cancelled, failed]
+        interval:
+          type: string
+          enum: [1m, 1d]
         total:
           type: integer
           minimum: 0

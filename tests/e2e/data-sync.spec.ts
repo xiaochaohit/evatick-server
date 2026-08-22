@@ -15,8 +15,13 @@ async function waitForRun(url: string) {
     const body = await response.json() as {
       data: {
         active_run: unknown
-        last_run: { status: string; succeeded: number; bars_written: number } | null
-        storage: { instruments: number; daily_bars: number }
+        last_run: {
+          status: string
+          interval: string
+          succeeded: number
+          bars_written: number
+        } | null
+        storage: { instruments: number; daily_bars: number; minute_bars: number }
       }
     }
     if (!body.data.active_run && body.data.last_run) return body.data
@@ -26,6 +31,73 @@ async function waitForRun(url: string) {
 }
 
 describe('local historical data synchronization', () => {
+  it('stores one-minute bars separately and serves covered requests from DuckDB', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'eva-minute-sync-'))
+    const requestedIntervals: string[] = []
+    const provider: InstrumentProvider = {
+      id: 'minute-sync-fixture',
+      async listInstruments() {
+        return [{
+          type: 'equity', market: 'CN', name: '浦发银行', symbol: '600000',
+          providerSymbol: 'sh600000', venue: 'XSHG', currency: 'CNY',
+          status: 'active', capabilities: ['bars'],
+        }]
+      },
+      async getBars(call) {
+        requestedIntervals.push(call.interval)
+        return ['2026-05-22', '2026-08-21'].map((date, index) => ({
+          source: 'sina',
+          interval: call.interval,
+          tradingDate: date,
+          periodStart: `${date}T09:30:00+08:00`,
+          periodEnd: `${date}T09:31:00+08:00`,
+          currency: 'CNY',
+          open: String(10 + index / 10), high: String(10.2 + index / 10),
+          low: String(9.9 + index / 10), close: String(10.1 + index / 10),
+          volume: 100 + index, turnover: String(1_000 + index),
+          adjustment: call.adjustment, complete: true,
+        }))
+      },
+    }
+    const server = await createEvaTickServer({
+      historyPath: join(directory, 'history.duckdb'),
+      healthCheckIntervalMs: 0,
+    })
+    await server.mountProvider(provider)
+
+    try {
+      const response = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['equity'], interval: '1m',
+          start: '2026-05-22', end: '2026-08-22', adjustment: 'none',
+        }),
+      })
+      expect(response.status).toBe(202)
+      const status = await waitForRun(server.url)
+      expect(status.last_run).toMatchObject({
+        status: 'completed', interval: '1m', bars_written: 2,
+      })
+      expect(status.storage).toMatchObject({ daily_bars: 0, minute_bars: 2 })
+
+      const localBars = await fetch(
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/bars?interval=1m&start=2026-05-22&end=2026-08-22`,
+      )
+      expect(localBars.status).toBe(200)
+      expect(await localBars.json()).toMatchObject({
+        data: [
+          { interval: '1m', period_end: '2026-05-22T09:31:00+08:00', close: '10.1' },
+          { interval: '1m', period_end: '2026-08-21T09:31:00+08:00', close: '10.2' },
+        ],
+        meta: { sources: [{ provider: 'local-duckdb', upstream: 'local' }] },
+      })
+      expect(requestedIntervals).toEqual(['1m'])
+    } finally {
+      await server.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('stores daily bars and re-fetches a ten-day overlap on incremental runs', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'eva-data-sync-'))
     const starts: string[] = []
@@ -191,7 +263,7 @@ describe('local historical data synchronization', () => {
       const scheduleResponse = await fetch(`${server.url}/v1/data-sync/schedule`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          enabled: true, time: '23:59', skip_weekends: true,
+          enabled: true, interval: '1m', time: '23:59', skip_weekends: true,
           instrument_types: ['equity', 'index'],
           lookback_days: 10, adjustment: 'none', delay_ms: 750,
         }),
@@ -199,19 +271,19 @@ describe('local historical data synchronization', () => {
       expect(scheduleResponse.status).toBe(200)
       expect(await scheduleResponse.json()).toMatchObject({
         data: {
-          enabled: true, time: '23:59', skip_weekends: true,
+          enabled: true, interval: '1m', time: '23:59', skip_weekends: true,
           lookback_days: 10, next_run_at: expect.any(String),
         },
       })
       const status = await fetch(`${server.url}/v1/data-sync`).then((result) => result.json())
       expect(status).toMatchObject({
-        data: { schedule: { enabled: true, time: '23:59', skip_weekends: true } },
+        data: { schedule: { enabled: true, interval: '1m', time: '23:59', skip_weekends: true } },
       })
 
       const invalidSchedule = await fetch(`${server.url}/v1/data-sync/schedule`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          enabled: true, time: '23:59', skip_weekends: true, instrument_types: ['equity'],
+          enabled: true, interval: '1m', time: '23:59', skip_weekends: true, instrument_types: ['equity'],
           lookback_days: 0, adjustment: 'none', delay_ms: 750,
         }),
       })

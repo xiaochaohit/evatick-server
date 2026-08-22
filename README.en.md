@@ -48,7 +48,7 @@ The server also provides:
 
 - Instrument listing, details, search, and context-aware resolution
 - Multi-source health checks, request timeouts, retries, and fallback
-- Background daily-bar synchronization, resume support, and daily schedules
+- Background daily and one-minute bar synchronization, resume support, and daily schedules
 - API-key authentication and RFC 9457-style `application/problem+json` errors
 - Admin login, key management, local data browsing, sync controls, and provider status
 

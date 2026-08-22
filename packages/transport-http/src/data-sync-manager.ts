@@ -3,13 +3,17 @@ import { randomUUID } from 'node:crypto'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 
 import type {
+  BarInterval,
   CatalogInstrument,
   InstrumentType,
   PriceAdjustment,
   ProviderBar,
 } from '@evatick/core'
 
+export type DataSyncInterval = Extract<BarInterval, '1m' | '1d'>
+
 export interface DataSyncRequest {
+  interval?: DataSyncInterval
   instrumentTypes: readonly InstrumentType[]
   start: string
   end: string
@@ -29,6 +33,7 @@ export interface DataSyncRun {
   run_id: string
   status: 'running' | 'completed' | 'completed_with_errors' | 'cancelled' | 'failed'
   instrument_types: readonly InstrumentType[]
+  interval: DataSyncInterval
   start: string
   end: string
   adjustment: PriceAdjustment
@@ -59,8 +64,11 @@ export interface DataSyncStatus {
   storage: {
     instruments: number
     daily_bars: number
+    minute_bars: number
     first_trading_date: string | null
     last_trading_date: string | null
+    first_minute_trading_date: string | null
+    last_minute_trading_date: string | null
   }
   active_run: DataSyncRun | null
   last_run: DataSyncRun | null
@@ -69,6 +77,7 @@ export interface DataSyncStatus {
 
 export interface DataSyncSchedule {
   enabled: boolean
+  interval: DataSyncInterval
   time: string
   skip_weekends: boolean
   instrument_types: readonly InstrumentType[]
@@ -119,7 +128,12 @@ interface DataSyncDependencies {
   loadInstruments(): Promise<readonly CatalogInstrument[]>
   loadBars(
     instrument: CatalogInstrument,
-    request: { start: string; end: string; adjustment: PriceAdjustment },
+    request: {
+      interval: DataSyncInterval
+      start: string
+      end: string
+      adjustment: PriceAdjustment
+    },
   ): Promise<SyncedBars>
 }
 
@@ -155,6 +169,12 @@ function subtractDays(value: string, days: number): string {
   return date.toISOString().slice(0, 10)
 }
 
+function addDays(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
 function laterDate(left: string, right: string): string {
   return left > right ? left : right
 }
@@ -170,6 +190,7 @@ export class DataSyncManager {
   private scheduleTimer: ReturnType<typeof setTimeout> | undefined
   private schedule: DataSyncSchedule = {
     enabled: false,
+    interval: '1d',
     time: '18:00',
     skip_weekends: false,
     instrument_types: ['equity', 'index'],
@@ -190,8 +211,11 @@ export class DataSyncManager {
       SELECT
         (SELECT count(*) FROM instruments)::INTEGER AS instruments,
         (SELECT count(*) FROM daily_bars)::BIGINT AS daily_bars,
+        (SELECT count(*) FROM minute_bars)::BIGINT AS minute_bars,
         (SELECT min(trading_date)::VARCHAR FROM daily_bars) AS first_trading_date,
-        (SELECT max(trading_date)::VARCHAR FROM daily_bars) AS last_trading_date
+        (SELECT max(trading_date)::VARCHAR FROM daily_bars) AS last_trading_date,
+        (SELECT min(trading_date)::VARCHAR FROM minute_bars) AS first_minute_trading_date,
+        (SELECT max(trading_date)::VARCHAR FROM minute_bars) AS last_minute_trading_date
     `)
     const row = reader.getRowObjectsJson()[0] ?? {}
     return {
@@ -199,11 +223,18 @@ export class DataSyncManager {
       storage: {
         instruments: Number(row.instruments ?? 0),
         daily_bars: Number(row.daily_bars ?? 0),
+        minute_bars: Number(row.minute_bars ?? 0),
         first_trading_date: typeof row.first_trading_date === 'string'
           ? row.first_trading_date
           : null,
         last_trading_date: typeof row.last_trading_date === 'string'
           ? row.last_trading_date
+          : null,
+        first_minute_trading_date: typeof row.first_minute_trading_date === 'string'
+          ? row.first_minute_trading_date
+          : null,
+        last_minute_trading_date: typeof row.last_minute_trading_date === 'string'
+          ? row.last_minute_trading_date
           : null,
       },
       active_run: this.activeRun,
@@ -319,6 +350,7 @@ export class DataSyncManager {
       throw new Error('DATA_SYNC_INVALID_DATE')
     }
     if (request.start > request.end) throw new Error('DATA_SYNC_INVALID_RANGE')
+    const interval = request.interval ?? '1d'
 
     const catalog = await this.dependencies.loadInstruments()
     const instruments = catalog
@@ -331,6 +363,7 @@ export class DataSyncManager {
       run_id: randomUUID(),
       status: 'running',
       instrument_types: [...request.instrumentTypes],
+      interval,
       start: request.start,
       end: request.end,
       adjustment: request.adjustment,
@@ -380,6 +413,7 @@ export class DataSyncManager {
 
     const run: DataSyncRun = {
       ...previous,
+      interval: previous.interval ?? '1d',
       run_id: randomUUID(),
       status: 'running',
       current_instrument: null,
@@ -418,15 +452,63 @@ export class DataSyncManager {
 
   async readBars(request: {
     instrumentId: string
+    interval?: DataSyncInterval
     adjustment: PriceAdjustment
     start?: string
     end?: string
   }): Promise<readonly ProviderBar[] | null> {
     await this.ready
-    const coverage = await this.coverage(request.instrumentId, request.adjustment)
+    const interval = request.interval ?? '1d'
+    const coverage = await this.coverage(request.instrumentId, request.adjustment, interval)
     if (!coverage) return null
     if (request.start && request.start < coverage.start) return null
     if (request.end && request.end > coverage.end) return null
+    if (interval === '1m') {
+      const storedRange = await this.storedRange(
+        request.instrumentId,
+        request.adjustment,
+        interval,
+      )
+      if (!storedRange) return null
+      // A requested boundary can fall on a weekend or market holiday. Ten days
+      // covers those closures while still rejecting a provider that silently
+      // returned only a recent slice of a multi-month minute request.
+      if (request.start && storedRange.first > addDays(request.start, 10)) return null
+      if (request.end && storedRange.last < subtractDays(request.end, 10)) return null
+      const reader = await this.db.runAndReadAll(`
+        SELECT
+          trading_date::VARCHAR AS trading_date,
+          period_start, period_end,
+          open, high, low, close, volume, turnover, complete
+        FROM minute_bars
+        WHERE instrument_id = $instrument_id
+          AND adjustment = $adjustment
+          AND ($start = '' OR trading_date >= $start::DATE)
+          AND ($end = '' OR trading_date <= $end::DATE)
+        ORDER BY period_start
+      `, {
+        instrument_id: request.instrumentId,
+        adjustment: request.adjustment,
+        start: request.start ?? '',
+        end: request.end ?? '',
+      })
+      return reader.getRowObjectsJson().map((row): ProviderBar => ({
+        source: 'local-duckdb',
+        interval: '1m',
+        tradingDate: String(row.trading_date),
+        periodStart: String(row.period_start),
+        periodEnd: String(row.period_end),
+        currency: 'CNY',
+        open: String(row.open),
+        high: String(row.high),
+        low: String(row.low),
+        close: String(row.close),
+        volume: row.volume === null ? null : Number(row.volume),
+        turnover: row.turnover === null ? null : String(row.turnover),
+        adjustment: request.adjustment,
+        complete: Boolean(row.complete),
+      }))
+    }
     const reader = await this.db.runAndReadAll(`
       SELECT
         trading_date::VARCHAR AS trading_date,
@@ -495,15 +577,22 @@ export class DataSyncManager {
   async storeBars(
     instrument: CatalogInstrument,
     result: SyncedBars,
-    request: { start?: string; end?: string; adjustment: PriceAdjustment },
+    request: {
+      interval?: DataSyncInterval
+      start?: string
+      end?: string
+      adjustment: PriceAdjustment
+    },
   ): Promise<void> {
     await this.ready
+    const interval = request.interval ?? '1d'
     await this.upsertInstrument(instrument)
-    await this.upsertBars(instrument, result, request.adjustment)
+    await this.upsertBars(instrument, result, request.adjustment, interval)
     if (request.start && request.end) {
       await this.updateCoverage(
         instrument.instrumentId,
         request.adjustment,
+        interval,
         request.start,
         request.end,
       )
@@ -513,12 +602,21 @@ export class DataSyncManager {
   async localDataSources() {
     await this.ready
     const reader = await this.db.runAndReadAll(`
-      SELECT instrument_type, count(*)::BIGINT AS records
-      FROM daily_bars
+      SELECT instrument_type, sum(records)::BIGINT AS records,
+             max(has_minute)::INTEGER AS has_minute
+      FROM (
+        SELECT instrument_type, count(*)::BIGINT AS records, 0 AS has_minute
+        FROM daily_bars GROUP BY instrument_type
+        UNION ALL
+        SELECT instrument_type, count(*)::BIGINT AS records, 1 AS has_minute
+        FROM minute_bars GROUP BY instrument_type
+      ) counts
       GROUP BY instrument_type
     `)
-    const counts = new Map(reader.getRowObjectsJson().map((row) =>
-      [String(row.instrument_type), Number(row.records)] as const))
+    const counts = new Map(reader.getRowObjectsJson().map((row) => [
+      String(row.instrument_type),
+      { records: Number(row.records), hasMinute: Number(row.has_minute) === 1 },
+    ] as const))
     const checkedAt = new Date().toISOString()
     return (['equity', 'index'] as const).map((category) => ({
       provider_id: 'local-duckdb',
@@ -526,11 +624,13 @@ export class DataSyncManager {
       source_name: '本地 DuckDB',
       category,
       status: 'healthy' as const,
-      capabilities: ['日线', '行情快照'],
+      capabilities: counts.get(category)?.hasMinute
+        ? ['日线', '分时', '行情快照']
+        : ['日线', '行情快照'],
       last_checked_at: checkedAt,
       last_success_at: checkedAt,
       latency_ms: 0,
-      records_checked: counts.get(category) ?? 0,
+      records_checked: counts.get(category)?.records ?? 0,
       error: null,
     }))
   }
@@ -587,6 +687,25 @@ export class DataSyncManager {
         fetched_at TIMESTAMP NOT NULL,
         PRIMARY KEY (instrument_id, trading_date, adjustment)
       );
+      CREATE TABLE IF NOT EXISTS minute_bars (
+        instrument_id VARCHAR NOT NULL,
+        instrument_type VARCHAR NOT NULL,
+        trading_date DATE NOT NULL,
+        period_start VARCHAR NOT NULL,
+        period_end VARCHAR NOT NULL,
+        open DOUBLE NOT NULL,
+        high DOUBLE NOT NULL,
+        low DOUBLE NOT NULL,
+        close DOUBLE NOT NULL,
+        volume BIGINT,
+        turnover DOUBLE,
+        adjustment VARCHAR NOT NULL,
+        complete BOOLEAN NOT NULL,
+        provider VARCHAR NOT NULL,
+        upstream VARCHAR,
+        fetched_at TIMESTAMP NOT NULL,
+        PRIMARY KEY (instrument_id, period_start, adjustment)
+      );
       CREATE TABLE IF NOT EXISTS sync_runs (
         run_id VARCHAR PRIMARY KEY,
         status VARCHAR NOT NULL,
@@ -595,6 +714,14 @@ export class DataSyncManager {
         finished_at TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS sync_coverage (
+        instrument_id VARCHAR NOT NULL,
+        adjustment VARCHAR NOT NULL,
+        requested_start DATE NOT NULL,
+        requested_end DATE NOT NULL,
+        updated_at TIMESTAMP NOT NULL,
+        PRIMARY KEY (instrument_id, adjustment)
+      );
+      CREATE TABLE IF NOT EXISTS minute_sync_coverage (
         instrument_id VARCHAR NOT NULL,
         adjustment VARCHAR NOT NULL,
         requested_start DATE NOT NULL,
@@ -622,6 +749,24 @@ export class DataSyncManager {
         upstream VARCHAR,
         fetched_at VARCHAR
       );
+      CREATE TEMP TABLE IF NOT EXISTS staged_minute_bars (
+        instrument_id VARCHAR,
+        instrument_type VARCHAR,
+        trading_date VARCHAR,
+        period_start VARCHAR,
+        period_end VARCHAR,
+        open VARCHAR,
+        high VARCHAR,
+        low VARCHAR,
+        close VARCHAR,
+        volume VARCHAR,
+        turnover VARCHAR,
+        adjustment VARCHAR,
+        complete VARCHAR,
+        provider VARCHAR,
+        upstream VARCHAR,
+        fetched_at VARCHAR
+      );
     `)
     await this.db.run(`
       UPDATE sync_runs
@@ -640,6 +785,7 @@ export class DataSyncManager {
       const storedRun = JSON.parse(latestRow.payload) as DataSyncRun
       this.lastRun = {
         ...storedRun,
+        interval: storedRun.interval ?? '1d',
         lookback_days: storedRun.lookback_days ?? 10,
         status: latestRow.status as DataSyncRun['status'],
         finished_at: typeof latestRow.finished_at === 'string'
@@ -657,6 +803,7 @@ export class DataSyncManager {
       this.schedule = {
         ...this.schedule,
         ...current,
+        interval: stored.interval ?? '1d',
         skip_weekends: stored.skip_weekends ?? false,
         lookback_days: stored.lookback_days ?? 10,
       }
@@ -683,10 +830,14 @@ export class DataSyncManager {
     await this.persistSchedule()
     if (this.activeRun) return
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
+    const start = this.schedule.interval === '1m'
+      ? subtractDays(today, 92)
+      : '1990-01-01'
     try {
       await this.start({
         instrumentTypes: this.schedule.instrument_types,
-        start: '1990-01-01',
+        interval: this.schedule.interval,
+        start,
         end: today,
         adjustment: this.schedule.adjustment,
         delayMs: this.schedule.delay_ms,
@@ -718,21 +869,23 @@ export class DataSyncManager {
       try {
         await this.upsertInstrument(instrument)
         const [storedRange, coveredStart] = await Promise.all([
-          this.storedRange(instrument.instrumentId, run.adjustment),
-          this.coveredStart(instrument.instrumentId, run.adjustment),
+          this.storedRange(instrument.instrumentId, run.adjustment, run.interval),
+          this.coveredStart(instrument.instrumentId, run.adjustment, run.interval),
         ])
         const start = storedRange && coveredStart && run.start >= coveredStart
           ? laterDate(run.start, subtractDays(storedRange.last, run.lookback_days))
           : run.start
         const result = await this.dependencies.loadBars(instrument, {
+          interval: run.interval,
           start,
           end: run.end,
           adjustment: run.adjustment,
         })
-        await this.upsertBars(instrument, result, run.adjustment)
+        await this.upsertBars(instrument, result, run.adjustment, run.interval)
         await this.updateCoverage(
           instrument.instrumentId,
           run.adjustment,
+          run.interval,
           run.start,
           run.end,
         )
@@ -798,12 +951,14 @@ export class DataSyncManager {
   private async storedRange(
     instrumentId: string,
     adjustment: PriceAdjustment,
+    interval: DataSyncInterval,
   ): Promise<{ first: string; last: string } | null> {
+    const table = interval === '1m' ? 'minute_bars' : 'daily_bars'
     const reader = await this.db.runAndReadAll(`
       SELECT
         min(trading_date)::VARCHAR AS first_trading_date,
         max(trading_date)::VARCHAR AS last_trading_date
-      FROM daily_bars
+      FROM ${table}
       WHERE instrument_id = $instrument_id AND adjustment = $adjustment
     `, { instrument_id: instrumentId, adjustment })
     const row = reader.getRowObjectsJson()[0]
@@ -816,10 +971,12 @@ export class DataSyncManager {
   private async coveredStart(
     instrumentId: string,
     adjustment: PriceAdjustment,
+    interval: DataSyncInterval,
   ): Promise<string | null> {
+    const table = interval === '1m' ? 'minute_sync_coverage' : 'sync_coverage'
     const reader = await this.db.runAndReadAll(`
       SELECT requested_start::VARCHAR AS requested_start
-      FROM sync_coverage
+      FROM ${table}
       WHERE instrument_id = $instrument_id AND adjustment = $adjustment
     `, { instrument_id: instrumentId, adjustment })
     const value = reader.getRowObjectsJson()[0]?.requested_start
@@ -829,12 +986,14 @@ export class DataSyncManager {
   private async coverage(
     instrumentId: string,
     adjustment: PriceAdjustment,
+    interval: DataSyncInterval,
   ): Promise<{ start: string; end: string } | null> {
+    const table = interval === '1m' ? 'minute_sync_coverage' : 'sync_coverage'
     const reader = await this.db.runAndReadAll(`
       SELECT
         requested_start::VARCHAR AS requested_start,
         requested_end::VARCHAR AS requested_end
-      FROM sync_coverage
+      FROM ${table}
       WHERE instrument_id = $instrument_id AND adjustment = $adjustment
     `, { instrument_id: instrumentId, adjustment })
     const row = reader.getRowObjectsJson()[0]
@@ -847,16 +1006,18 @@ export class DataSyncManager {
   private async updateCoverage(
     instrumentId: string,
     adjustment: PriceAdjustment,
+    interval: DataSyncInterval,
     start: string,
     end: string,
   ): Promise<void> {
+    const table = interval === '1m' ? 'minute_sync_coverage' : 'sync_coverage'
     await this.db.run(`
-      INSERT INTO sync_coverage VALUES (
+      INSERT INTO ${table} VALUES (
         $instrument_id, $adjustment, $start::DATE, $end::DATE, current_timestamp
       )
       ON CONFLICT (instrument_id, adjustment) DO UPDATE SET
-        requested_start = least(sync_coverage.requested_start, excluded.requested_start),
-        requested_end = greatest(sync_coverage.requested_end, excluded.requested_end),
+        requested_start = least(${table}.requested_start, excluded.requested_start),
+        requested_end = greatest(${table}.requested_end, excluded.requested_end),
         updated_at = excluded.updated_at
     `, {
       instrument_id: instrumentId,
@@ -870,8 +1031,16 @@ export class DataSyncManager {
     instrument: CatalogInstrument,
     result: SyncedBars,
     adjustment: PriceAdjustment,
+    interval: DataSyncInterval,
   ): Promise<void> {
     if (!result.bars.length) return
+    if (result.bars.some((bar) => bar.interval !== interval)) {
+      throw new Error('DATA_SYNC_INTERVAL_MISMATCH')
+    }
+    if (interval === '1m') {
+      await this.upsertMinuteBars(instrument, result, adjustment)
+      return
+    }
     await this.db.run('DELETE FROM staged_daily_bars')
     const appender = await this.db.createAppender('staged_daily_bars')
     const fetchedAt = new Date().toISOString()
@@ -915,6 +1084,67 @@ export class DataSyncManager {
         close = excluded.close,
         volume = excluded.volume,
         turnover = excluded.turnover,
+        provider = excluded.provider,
+        upstream = excluded.upstream,
+        fetched_at = excluded.fetched_at
+    `)
+  }
+
+  private async upsertMinuteBars(
+    instrument: CatalogInstrument,
+    result: SyncedBars,
+    adjustment: PriceAdjustment,
+  ): Promise<void> {
+    await this.db.run('DELETE FROM staged_minute_bars')
+    const appender = await this.db.createAppender('staged_minute_bars')
+    const fetchedAt = new Date().toISOString()
+    for (const bar of result.bars) {
+      const values = [
+        instrument.instrumentId,
+        instrument.type,
+        bar.tradingDate,
+        bar.periodStart,
+        bar.periodEnd,
+        bar.open,
+        bar.high,
+        bar.low,
+        bar.close,
+        bar.volume === null ? null : String(bar.volume),
+        bar.turnover,
+        adjustment,
+        String(bar.complete),
+        result.provider,
+        result.upstream ?? bar.source ?? null,
+        fetchedAt,
+      ]
+      for (const value of values) {
+        if (value === null) appender.appendNull()
+        else appender.appendVarchar(value)
+      }
+      appender.endRow()
+    }
+    appender.flushSync()
+    appender.closeSync()
+    await this.db.run(`
+      INSERT INTO minute_bars
+      SELECT
+        instrument_id, instrument_type, trading_date::DATE,
+        period_start, period_end,
+        open::DOUBLE, high::DOUBLE, low::DOUBLE, close::DOUBLE,
+        volume::BIGINT, turnover::DOUBLE, adjustment, complete::BOOLEAN,
+        provider, upstream, fetched_at::TIMESTAMP
+      FROM staged_minute_bars
+      ON CONFLICT (instrument_id, period_start, adjustment) DO UPDATE SET
+        instrument_type = excluded.instrument_type,
+        trading_date = excluded.trading_date,
+        period_end = excluded.period_end,
+        open = excluded.open,
+        high = excluded.high,
+        low = excluded.low,
+        close = excluded.close,
+        volume = excluded.volume,
+        turnover = excluded.turnover,
+        complete = excluded.complete,
         provider = excluded.provider,
         upstream = excluded.upstream,
         fetched_at = excluded.fetched_at

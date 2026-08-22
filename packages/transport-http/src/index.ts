@@ -267,7 +267,7 @@ export class EvaHttpService extends Service {
           invoke: (provider, providerSymbol, signal) => provider.getBars?.({
             providerSymbol,
             signal,
-            interval: '1d',
+            interval: request.interval,
             start: request.start,
             end: request.end,
             adjustment: request.adjustment,
@@ -451,6 +451,7 @@ export class EvaHttpService extends Service {
     this.app.post<{
       Body: {
         instrument_types?: InstrumentType[]
+        interval?: '1m' | '1d'
         start?: string
         end?: string
         adjustment?: PriceAdjustment
@@ -459,6 +460,7 @@ export class EvaHttpService extends Service {
       }
     }>('/v1/data-sync/runs', async (request, reply) => {
       const instrumentTypes = request.body?.instrument_types
+      const interval = request.body?.interval ?? '1d'
       const start = request.body?.start
       const end = request.body?.end
       const adjustment = request.body?.adjustment ?? 'none'
@@ -467,6 +469,7 @@ export class EvaHttpService extends Service {
       if (
         !Array.isArray(instrumentTypes) ||
         instrumentTypes.some((value) => value !== 'equity' && value !== 'index') ||
+        (interval !== '1m' && interval !== '1d') ||
         typeof start !== 'string' ||
         typeof end !== 'string' ||
         !['none', 'forward', 'backward'].includes(adjustment) ||
@@ -478,7 +481,7 @@ export class EvaHttpService extends Service {
           title: 'Invalid data sync request',
           status: 400,
           code: 'INVALID_DATA_SYNC_REQUEST',
-          detail: 'instrument_types, start, end, adjustment, or limit is invalid.',
+          detail: 'instrument_types, interval, start, end, adjustment, or limit is invalid.',
           retryable: false,
           request_id: `req_${randomUUID()}`,
         })
@@ -486,6 +489,7 @@ export class EvaHttpService extends Service {
       try {
         const run = await this.dataSyncManager.start({
           instrumentTypes,
+          interval,
           start,
           end,
           adjustment,
@@ -553,6 +557,7 @@ export class EvaHttpService extends Service {
     this.app.put<{
       Body: {
         enabled?: boolean
+        interval?: '1m' | '1d'
         time?: string
         skip_weekends?: boolean
         instrument_types?: InstrumentType[]
@@ -563,6 +568,7 @@ export class EvaHttpService extends Service {
     }>('/v1/data-sync/schedule', async (request, reply) => {
       const body = request.body
       const enabled = body?.enabled ?? false
+      const interval = body?.interval ?? '1d'
       const time = body?.time
       const skipWeekends = body?.skip_weekends ?? false
       const instrumentTypes = body?.instrument_types
@@ -571,6 +577,7 @@ export class EvaHttpService extends Service {
       const delayMs = body?.delay_ms
       if (
         typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) ||
+        (interval !== '1m' && interval !== '1d') ||
         typeof skipWeekends !== 'boolean' ||
         !Array.isArray(instrumentTypes) || instrumentTypes.length === 0 ||
         instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
@@ -582,12 +589,12 @@ export class EvaHttpService extends Service {
           type: 'urn:eva:problem:invalid-data-sync-schedule',
           title: 'Invalid data sync schedule', status: 400,
           code: 'INVALID_DATA_SYNC_SCHEDULE',
-          detail: 'enabled, time, skip_weekends, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
+          detail: 'enabled, interval, time, skip_weekends, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }
       const schedule = await this.dataSyncManager.updateSchedule({
-        enabled, time, skip_weekends: skipWeekends,
+        enabled, interval, time, skip_weekends: skipWeekends,
         instrument_types: instrumentTypes, lookback_days: lookbackDays!,
         adjustment, delay_ms: delayMs!,
       })
@@ -971,9 +978,10 @@ export class EvaHttpService extends Service {
       }
       const interval = request.query.interval ?? '1d'
       const adjustment = request.query.adjustment ?? 'none'
-      if (interval === '1d') {
+      if (interval === '1d' || interval === '1m') {
         const localBars = await this.dataSyncManager.readBars({
           instrumentId: instrument.instrumentId,
+          interval,
           adjustment,
           start: request.query.start,
           end: request.query.end,
@@ -1025,13 +1033,14 @@ export class EvaHttpService extends Service {
             }),
         })
         const cacheWarnings: string[] = []
-        if (interval === '1d') {
+        if (interval === '1d' || interval === '1m') {
           try {
             await this.dataSyncManager.storeBars(instrument, {
               provider: result.provider,
               upstream: result.value[0]?.source,
               bars: result.value,
             }, {
+              interval,
               start: request.query.start,
               end: request.query.end,
               adjustment,
