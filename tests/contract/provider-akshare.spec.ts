@@ -90,6 +90,26 @@ describe('AKShare provider contract', () => {
     ])
   })
 
+  it('normalizes sparse cumulative equity adjustment factors', async () => {
+    const runner: AkshareRunner = async (request) => {
+      expect(request).toEqual({
+        operation: 'adjustment_factors', providerSymbol: 'sh600000',
+      })
+      return { source: 'sina', data: [
+        { date: '2025-07-16T00:00:00', hfq_factor: '3.847291' },
+        { date: '2026-07-15', hfq_factor: 4.1025 },
+      ] }
+    }
+    const provider = new AkshareProvider({ runner })
+
+    await expect(provider.getAdjustmentFactors!({
+      providerSymbol: 'sh600000', signal: new AbortController().signal,
+    })).resolves.toEqual([
+      { source: 'sina', effectiveDate: '2025-07-16', cumulativeFactor: '3.847291' },
+      { source: 'sina', effectiveDate: '2026-07-15', cumulativeFactor: '4.1025' },
+    ])
+  })
+
   it('normalizes intraday bars with Shanghai periods and the selected source', async () => {
     const runner: AkshareRunner = async (request) => {
       expect(request).toMatchObject({

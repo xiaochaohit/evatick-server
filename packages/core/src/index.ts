@@ -59,6 +59,14 @@ export interface BarsCall extends ProviderCall {
   adjustment: PriceAdjustment
 }
 
+export interface ProviderAdjustmentFactor {
+  source?: string
+  effectiveDate: string
+  cumulativeFactor: string
+}
+
+export type AdjustmentFactorsCall = ProviderCall
+
 export interface ProviderConstituent {
   constituentProviderSymbol: string
   asOfDate: string
@@ -113,6 +121,9 @@ export interface InstrumentProvider {
   close?(): Promise<void> | void
   getQuote?(call: ProviderCall): Promise<ProviderQuote>
   getBars?(call: BarsCall): Promise<readonly ProviderBar[]>
+  getAdjustmentFactors?(
+    call: AdjustmentFactorsCall,
+  ): Promise<readonly ProviderAdjustmentFactor[]>
   getConstituents?(
     call: ConstituentsCall,
   ): Promise<readonly ProviderConstituent[]>

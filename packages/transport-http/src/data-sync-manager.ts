@@ -8,6 +8,7 @@ import type {
   CatalogInstrument,
   InstrumentType,
   PriceAdjustment,
+  ProviderAdjustmentFactor,
   ProviderBar,
 } from '@evatick/core'
 
@@ -28,6 +29,13 @@ export interface SyncedBars {
   provider: string
   upstream?: string
   bars: readonly ProviderBar[]
+}
+
+export interface SyncedAdjustmentFactors {
+  provider: string
+  upstream?: string
+  factors: readonly ProviderAdjustmentFactor[]
+  asOfDate: string
 }
 
 export interface DataSyncRun {
@@ -66,6 +74,7 @@ export interface DataSyncStatus {
     instruments: number
     daily_bars: number
     minute_bars: number
+    adjustment_factors: number
     database_bytes: number | null
     first_trading_date: string | null
     last_trading_date: string | null
@@ -172,6 +181,9 @@ interface DataSyncDependencies {
       adjustment: PriceAdjustment
     },
   ): Promise<SyncedBars>
+  loadAdjustmentFactors(
+    instrument: CatalogInstrument,
+  ): Promise<SyncedAdjustmentFactors | null>
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -216,6 +228,17 @@ function laterDate(left: string, right: string): string {
   return left > right ? left : right
 }
 
+function adjustedPrice(
+  value: string,
+  factor: number,
+  anchor: number,
+  adjustment: PriceAdjustment,
+): string {
+  if (adjustment === 'none') return value
+  const multiplier = adjustment === 'backward' ? factor : factor / anchor
+  return String(Number((Number(value) * multiplier).toFixed(10)))
+}
+
 export class DataSyncManager {
   private readonly ready: Promise<void>
   private instance: DuckDBInstance | undefined
@@ -238,8 +261,9 @@ export class DataSyncManager {
     const reader = await this.db.runAndReadAll(`
       SELECT
         (SELECT count(*) FROM instruments)::INTEGER AS instruments,
-        (SELECT count(*) FROM daily_bars)::BIGINT AS daily_bars,
-        (SELECT count(*) FROM minute_bars)::BIGINT AS minute_bars,
+        (SELECT count(*) FROM daily_bars WHERE adjustment = 'none')::BIGINT AS daily_bars,
+        (SELECT count(*) FROM minute_bars WHERE adjustment = 'none')::BIGINT AS minute_bars,
+        (SELECT count(*) FROM equity_adjustment_factors)::BIGINT AS adjustment_factors,
         (SELECT min(trading_date)::VARCHAR FROM daily_bars) AS first_trading_date,
         (SELECT max(trading_date)::VARCHAR FROM daily_bars) AS last_trading_date,
         (SELECT min(trading_date)::VARCHAR FROM minute_bars) AS first_minute_trading_date,
@@ -252,6 +276,7 @@ export class DataSyncManager {
         instruments: Number(row.instruments ?? 0),
         daily_bars: Number(row.daily_bars ?? 0),
         minute_bars: Number(row.minute_bars ?? 0),
+        adjustment_factors: Number(row.adjustment_factors ?? 0),
         database_bytes: databaseBytes,
         first_trading_date: typeof row.first_trading_date === 'string'
           ? row.first_trading_date
@@ -624,6 +649,9 @@ export class DataSyncManager {
     if (!DATE_PATTERN.test(request.start) || !DATE_PATTERN.test(request.end)) {
       throw new Error('DATA_SYNC_INVALID_DATE')
     }
+    if (request.adjustment !== 'none') {
+      throw new Error('DATA_SYNC_REQUIRES_RAW_BARS')
+    }
     if (request.start > request.end) throw new Error('DATA_SYNC_INVALID_RANGE')
     const interval = request.interval ?? '1d'
 
@@ -732,17 +760,19 @@ export class DataSyncManager {
     adjustment: PriceAdjustment
     start?: string
     end?: string
+    asOf?: string
   }): Promise<readonly ProviderBar[] | null> {
     await this.ready
     const interval = request.interval ?? '1d'
-    const coverage = await this.coverage(request.instrumentId, request.adjustment, interval)
+    const coverage = await this.coverage(request.instrumentId, 'none', interval)
     if (!coverage) return null
     if (request.start && request.start < coverage.start) return null
     if (request.end && request.end > coverage.end) return null
+    let bars: readonly ProviderBar[]
     if (interval === '1m') {
       const storedRange = await this.storedRange(
         request.instrumentId,
-        request.adjustment,
+        'none',
         interval,
       )
       if (!storedRange) return null
@@ -758,17 +788,16 @@ export class DataSyncManager {
           open, high, low, close, volume, turnover, complete
         FROM minute_bars
         WHERE instrument_id = $instrument_id
-          AND adjustment = $adjustment
+          AND adjustment = 'none'
           AND ($start = '' OR trading_date >= $start::DATE)
           AND ($end = '' OR trading_date <= $end::DATE)
         ORDER BY period_start
       `, {
         instrument_id: request.instrumentId,
-        adjustment: request.adjustment,
         start: request.start ?? '',
         end: request.end ?? '',
       })
-      return reader.getRowObjectsJson().map((row): ProviderBar => ({
+      bars = reader.getRowObjectsJson().map((row): ProviderBar => ({
         source: 'local-duckdb',
         interval: '1m',
         tradingDate: String(row.trading_date),
@@ -781,45 +810,104 @@ export class DataSyncManager {
         close: String(row.close),
         volume: row.volume === null ? null : Number(row.volume),
         turnover: row.turnover === null ? null : String(row.turnover),
-        adjustment: request.adjustment,
+        adjustment: 'none',
         complete: Boolean(row.complete),
       }))
+    } else {
+      const reader = await this.db.runAndReadAll(`
+        SELECT
+          trading_date::VARCHAR AS trading_date,
+          open, high, low, close, volume, turnover
+        FROM daily_bars
+        WHERE instrument_id = $instrument_id
+          AND adjustment = 'none'
+          AND ($start = '' OR trading_date >= $start::DATE)
+          AND ($end = '' OR trading_date <= $end::DATE)
+        ORDER BY trading_date
+      `, {
+        instrument_id: request.instrumentId,
+        start: request.start ?? '',
+        end: request.end ?? '',
+      })
+      bars = reader.getRowObjectsJson().map((row): ProviderBar => {
+        const tradingDate = String(row.trading_date)
+        return {
+          source: 'local-duckdb',
+          interval: '1d',
+          tradingDate,
+          periodStart: `${tradingDate}T00:00:00+08:00`,
+          periodEnd: `${tradingDate}T23:59:59+08:00`,
+          currency: 'CNY',
+          open: String(row.open),
+          high: String(row.high),
+          low: String(row.low),
+          close: String(row.close),
+          volume: row.volume === null ? null : Number(row.volume),
+          turnover: row.turnover === null ? null : String(row.turnover),
+          adjustment: 'none',
+          complete: true,
+        }
+      })
     }
-    const reader = await this.db.runAndReadAll(`
-      SELECT
-        trading_date::VARCHAR AS trading_date,
-        open, high, low, close, volume, turnover
-      FROM daily_bars
-      WHERE instrument_id = $instrument_id
-        AND adjustment = $adjustment
-        AND ($start = '' OR trading_date >= $start::DATE)
-        AND ($end = '' OR trading_date <= $end::DATE)
-      ORDER BY trading_date
-    `, {
-      instrument_id: request.instrumentId,
-      adjustment: request.adjustment,
-      start: request.start ?? '',
-      end: request.end ?? '',
+    return this.adjustBars(request.instrumentId, bars, request.adjustment, request.asOf)
+  }
+
+  async adjustBars(
+    instrumentId: string,
+    bars: readonly ProviderBar[],
+    adjustment: PriceAdjustment,
+    asOf?: string,
+  ): Promise<readonly ProviderBar[] | null> {
+    await this.ready
+    if (adjustment === 'none') return bars
+    const anchorDate = asOf ?? new Date().toLocaleDateString('sv-SE', {
+      timeZone: 'Asia/Shanghai',
     })
-    return reader.getRowObjectsJson().map((row): ProviderBar => {
-      const tradingDate = String(row.trading_date)
+    if (!await this.hasAdjustmentFactorCoverage(instrumentId, anchorDate)) return null
+    const reader = await this.db.runAndReadAll(`
+      SELECT effective_date::VARCHAR AS effective_date, cumulative_factor
+      FROM equity_adjustment_factors
+      WHERE instrument_id = $instrument_id AND effective_date <= $as_of::DATE
+      ORDER BY effective_date
+    `, { instrument_id: instrumentId, as_of: anchorDate })
+    const factors = reader.getRowObjectsJson().map((row) => ({
+      date: String(row.effective_date),
+      value: Number(row.cumulative_factor),
+    }))
+    const anchor = factors.at(-1)?.value ?? 1
+    let factorIndex = -1
+    let factor = 1
+    return bars.map((bar): ProviderBar => {
+      while (factors[factorIndex + 1]?.date <= bar.tradingDate) {
+        factorIndex += 1
+        factor = factors[factorIndex]!.value
+      }
       return {
-        source: 'local-duckdb',
-        interval: '1d',
-        tradingDate,
-        periodStart: `${tradingDate}T00:00:00+08:00`,
-        periodEnd: `${tradingDate}T23:59:59+08:00`,
-        currency: 'CNY',
-        open: String(row.open),
-        high: String(row.high),
-        low: String(row.low),
-        close: String(row.close),
-        volume: row.volume === null ? null : Number(row.volume),
-        turnover: row.turnover === null ? null : String(row.turnover),
-        adjustment: request.adjustment,
-        complete: true,
+        ...bar,
+        open: adjustedPrice(bar.open, factor, anchor, adjustment),
+        high: adjustedPrice(bar.high, factor, anchor, adjustment),
+        low: adjustedPrice(bar.low, factor, anchor, adjustment),
+        close: adjustedPrice(bar.close, factor, anchor, adjustment),
+        adjustment,
       }
     })
+  }
+
+  async hasAdjustmentFactorCoverage(
+    instrumentId: string,
+    asOf?: string,
+  ): Promise<boolean> {
+    await this.ready
+    const anchorDate = asOf ?? new Date().toLocaleDateString('sv-SE', {
+      timeZone: 'Asia/Shanghai',
+    })
+    const coverage = await this.db.runAndReadAll(`
+      SELECT as_of_date::VARCHAR AS as_of_date
+      FROM equity_adjustment_factor_coverage
+      WHERE instrument_id = $instrument_id
+    `, { instrument_id: instrumentId })
+    const coveredAsOf = coverage.getRowObjectsJson()[0]?.as_of_date
+    return typeof coveredAsOf === 'string' && coveredAsOf >= anchorDate
   }
 
   async readQuote(instrumentId: string): Promise<LocalQuote | null> {
@@ -861,6 +949,9 @@ export class DataSyncManager {
     },
   ): Promise<void> {
     await this.ready
+    if (request.adjustment !== 'none') {
+      throw new Error('ONLY_RAW_BARS_CAN_BE_STORED')
+    }
     const interval = request.interval ?? '1d'
     await this.upsertInstrument(instrument)
     await this.upsertBars(instrument, result, request.adjustment, interval)
@@ -873,6 +964,18 @@ export class DataSyncManager {
         request.end,
       )
     }
+  }
+
+  async storeAdjustmentFactors(
+    instrument: CatalogInstrument,
+    result: SyncedAdjustmentFactors,
+  ): Promise<void> {
+    await this.ready
+    if (instrument.type !== 'equity') {
+      throw new Error('ADJUSTMENT_FACTORS_REQUIRE_EQUITY')
+    }
+    await this.upsertInstrument(instrument)
+    await this.upsertAdjustmentFactors(instrument.instrumentId, result)
   }
 
   async localDataSources() {
@@ -983,6 +1086,22 @@ export class DataSyncManager {
         fetched_at TIMESTAMP NOT NULL,
         PRIMARY KEY (instrument_id, period_start, adjustment)
       );
+      CREATE TABLE IF NOT EXISTS equity_adjustment_factors (
+        instrument_id VARCHAR NOT NULL,
+        effective_date DATE NOT NULL,
+        cumulative_factor DECIMAL(30, 15) NOT NULL,
+        provider VARCHAR NOT NULL,
+        upstream VARCHAR,
+        fetched_at TIMESTAMP NOT NULL,
+        PRIMARY KEY (instrument_id, effective_date)
+      );
+      CREATE TABLE IF NOT EXISTS equity_adjustment_factor_coverage (
+        instrument_id VARCHAR PRIMARY KEY,
+        as_of_date DATE NOT NULL,
+        provider VARCHAR NOT NULL,
+        upstream VARCHAR,
+        fetched_at TIMESTAMP NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS sync_runs (
         run_id VARCHAR PRIMARY KEY,
         status VARCHAR NOT NULL,
@@ -1040,6 +1159,14 @@ export class DataSyncManager {
         turnover VARCHAR,
         adjustment VARCHAR,
         complete VARCHAR,
+        provider VARCHAR,
+        upstream VARCHAR,
+        fetched_at VARCHAR
+      );
+      CREATE TEMP TABLE IF NOT EXISTS staged_adjustment_factors (
+        instrument_id VARCHAR,
+        effective_date VARCHAR,
+        cumulative_factor VARCHAR,
         provider VARCHAR,
         upstream VARCHAR,
         fetched_at VARCHAR
@@ -1178,13 +1305,21 @@ export class DataSyncManager {
         const start = storedRange && coveredStart && run.start >= coveredStart
           ? laterDate(run.start, subtractDays(storedRange.last, run.lookback_days))
           : run.start
-        const result = await this.dependencies.loadBars(instrument, {
-          interval: run.interval,
-          start,
-          end: run.end,
-          adjustment: run.adjustment,
-        })
+        const [result, adjustmentFactors] = await Promise.all([
+          this.dependencies.loadBars(instrument, {
+            interval: run.interval,
+            start,
+            end: run.end,
+            adjustment: 'none',
+          }),
+          instrument.type === 'equity' && run.interval === '1d'
+            ? this.dependencies.loadAdjustmentFactors(instrument)
+            : null,
+        ])
         await this.upsertBars(instrument, result, run.adjustment, run.interval)
+        if (adjustmentFactors) {
+          await this.upsertAdjustmentFactors(instrument.instrumentId, adjustmentFactors)
+        }
         await this.updateCoverage(
           instrument.instrumentId,
           run.adjustment,
@@ -1452,6 +1587,75 @@ export class DataSyncManager {
         upstream = excluded.upstream,
         fetched_at = excluded.fetched_at
     `)
+  }
+
+  private async upsertAdjustmentFactors(
+    instrumentId: string,
+    result: SyncedAdjustmentFactors,
+  ): Promise<void> {
+    if (!DATE_PATTERN.test(result.asOfDate)) {
+      throw new Error('INVALID_ADJUSTMENT_FACTOR_AS_OF_DATE')
+    }
+    await this.db.run('DELETE FROM staged_adjustment_factors')
+    const appender = await this.db.createAppender('staged_adjustment_factors')
+    const fetchedAt = new Date().toISOString()
+    for (const factor of result.factors) {
+      if (!DATE_PATTERN.test(factor.effectiveDate) ||
+        !Number.isFinite(Number(factor.cumulativeFactor)) ||
+        Number(factor.cumulativeFactor) <= 0) {
+        appender.closeSync()
+        throw new Error('INVALID_ADJUSTMENT_FACTOR')
+      }
+      for (const value of [
+        instrumentId,
+        factor.effectiveDate,
+        factor.cumulativeFactor,
+        result.provider,
+        result.upstream ?? factor.source ?? null,
+        fetchedAt,
+      ]) {
+        if (value === null) appender.appendNull()
+        else appender.appendVarchar(value)
+      }
+      appender.endRow()
+    }
+    appender.flushSync()
+    appender.closeSync()
+    await this.db.run('BEGIN TRANSACTION')
+    try {
+      await this.db.run(`
+        DELETE FROM equity_adjustment_factors
+        WHERE instrument_id = $instrument_id
+      `, { instrument_id: instrumentId })
+      await this.db.run(`
+        INSERT INTO equity_adjustment_factors
+        SELECT instrument_id, effective_date::DATE,
+          cumulative_factor::DECIMAL(30, 15), provider, upstream,
+          fetched_at::TIMESTAMP
+        FROM staged_adjustment_factors
+      `)
+      await this.db.run(`
+        INSERT INTO equity_adjustment_factor_coverage VALUES (
+          $instrument_id, $as_of_date::DATE, $provider, $upstream,
+          $fetched_at::TIMESTAMP
+        )
+        ON CONFLICT (instrument_id) DO UPDATE SET
+          as_of_date = excluded.as_of_date,
+          provider = excluded.provider,
+          upstream = excluded.upstream,
+          fetched_at = excluded.fetched_at
+      `, {
+        instrument_id: instrumentId,
+        as_of_date: result.asOfDate,
+        provider: result.provider,
+        upstream: result.upstream ?? null,
+        fetched_at: fetchedAt,
+      })
+      await this.db.run('COMMIT')
+    } catch (error) {
+      await this.db.run('ROLLBACK')
+      throw error
+    }
   }
 
   private async persistRun(run: DataSyncRun): Promise<void> {

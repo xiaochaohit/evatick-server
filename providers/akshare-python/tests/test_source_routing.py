@@ -264,6 +264,29 @@ class SourceRoutingTest(unittest.TestCase):
         self.assertEqual(calls, ["sina", "eastmoney"])
         self.assertEqual(result["source"], "eastmoney")
 
+    def test_adjustment_factors_use_sina_hfq_factor_series(self) -> None:
+        calls: list[dict[str, str]] = []
+
+        def daily(**kwargs):
+            calls.append(kwargs)
+            return [{"date": "2026-07-15", "hfq_factor": 4.1025}]
+
+        with patch.dict(sys.modules, {
+            "akshare": SimpleNamespace(stock_zh_a_daily=daily),
+        }):
+            result = execute({
+                "operation": "adjustment_factors",
+                "providerSymbol": "sh600000",
+            })
+
+        self.assertEqual(calls, [{
+            "symbol": "sh600000", "adjust": "hfq-factor",
+        }])
+        self.assertEqual(result, {
+            "source": "sina",
+            "data": [{"date": "2026-07-15", "hfq_factor": 4.1025}],
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

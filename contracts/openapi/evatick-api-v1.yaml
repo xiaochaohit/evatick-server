@@ -332,8 +332,15 @@ paths:
             type: string
         - name: adjustment
           in: query
+          description: Equity price adjustment. Indices only support none.
           schema:
             $ref: '#/components/schemas/PriceAdjustment'
+        - name: as_of
+          in: query
+          description: ISO date used as the forward-adjustment anchor; defaults to the current China date.
+          schema:
+            type: string
+            format: date
       responses:
         '200':
           description: Chronologically ordered bars.

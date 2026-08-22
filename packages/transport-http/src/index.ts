@@ -254,6 +254,31 @@ export class EvaHttpService extends Service {
         request_id: `req_${randomUUID()}`,
       })
 
+    const loadAdjustmentFactors = async (instrument: CatalogInstrument) => {
+      if (instrument.type !== 'equity' ||
+        !ctx.marketProviderRegistry.list().some((provider) =>
+          typeof provider.getAdjustmentFactors === 'function')) {
+        return null
+      }
+      const result = await routeInstrumentData({
+        providers: ctx.marketProviderRegistry.list(),
+        instrument,
+        capability: 'bars',
+        ...routingOptions,
+        supports: (provider) => typeof provider.getAdjustmentFactors === 'function',
+        invoke: (provider, providerSymbol, signal) =>
+          provider.getAdjustmentFactors?.({ providerSymbol, signal }),
+      })
+      return {
+        provider: result.provider,
+        upstream: result.value[0]?.source,
+        factors: result.value,
+        asOfDate: new Date().toLocaleDateString('sv-SE', {
+          timeZone: 'Asia/Shanghai',
+        }),
+      }
+    }
+
     this.dataSyncManager = new DataSyncManager({
       databasePath: this.config.historyPath ?? ':memory:',
       loadInstruments: async () => (await loadCatalog()).instruments,
@@ -279,6 +304,7 @@ export class EvaHttpService extends Service {
           bars: result.value,
         }
       },
+      loadAdjustmentFactors,
     })
 
     const dataSourcesResponse = async () => ({
@@ -528,7 +554,7 @@ export class EvaHttpService extends Service {
         (interval !== '1m' && interval !== '1d') ||
         typeof start !== 'string' ||
         typeof end !== 'string' ||
-        !['none', 'forward', 'backward'].includes(adjustment) ||
+        adjustment !== 'none' ||
         (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20_000)) ||
         !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 10_000
       ) {
@@ -537,7 +563,7 @@ export class EvaHttpService extends Service {
           title: 'Invalid data sync request',
           status: 400,
           code: 'INVALID_DATA_SYNC_REQUEST',
-          detail: 'instrument_types, interval, start, end, adjustment, or limit is invalid.',
+          detail: 'Synchronization stores raw bars only; instrument_types, interval, start, end, limit, or delay_ms is invalid.',
           retryable: false,
           request_id: `req_${randomUUID()}`,
         })
@@ -636,7 +662,7 @@ export class EvaHttpService extends Service {
         !Array.isArray(instrumentTypes) || instrumentTypes.length === 0 ||
         instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
         !Number.isInteger(lookbackDays) || (lookbackDays ?? 0) < 1 || (lookbackDays ?? 0) > 90 ||
-        adjustment === undefined || !['none', 'forward', 'backward'].includes(adjustment) ||
+        adjustment !== 'none' ||
         !Number.isInteger(delayMs) || (delayMs ?? -1) < 0 || (delayMs ?? 0) > 10_000
       ) {
         return reply.code(400).type('application/problem+json').send({
@@ -1036,6 +1062,7 @@ export class EvaHttpService extends Service {
         start?: string
         end?: string
         adjustment?: PriceAdjustment
+        as_of?: string
       }
     }>('/v1/instruments/:instrumentId/bars', async (request, reply) => {
       const catalog = await loadCatalog()
@@ -1055,14 +1082,66 @@ export class EvaHttpService extends Service {
       }
       const interval = request.query.interval ?? '1d'
       const adjustment = request.query.adjustment ?? 'none'
+      const asOf = request.query.as_of
+      if (!['none', 'forward', 'backward'].includes(adjustment)) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-price-adjustment',
+          title: 'Invalid price adjustment', status: 400,
+          code: 'INVALID_PRICE_ADJUSTMENT',
+          detail: 'adjustment must be none, forward, or backward.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      if (asOf !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-adjustment-as-of',
+          title: 'Invalid adjustment as-of date', status: 400,
+          code: 'INVALID_ADJUSTMENT_AS_OF', detail: 'as_of must be an ISO date.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      if (asOf && request.query.end && asOf < request.query.end) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-adjustment-as-of-range',
+          title: 'Invalid adjustment as-of range', status: 400,
+          code: 'INVALID_ADJUSTMENT_AS_OF_RANGE',
+          detail: 'as_of must be on or after the requested end date.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      if (instrument.type === 'index' && adjustment !== 'none') {
+        return reply.code(422).type('application/problem+json').send({
+          type: 'urn:eva:problem:adjustment-unavailable-for-index',
+          title: 'Price adjustment unavailable for index', status: 422,
+          code: 'ADJUSTMENT_UNAVAILABLE_FOR_INDEX',
+          detail: 'Price indices are already divisor-adjusted; request adjustment=none.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      let loadedFactors: Awaited<ReturnType<typeof loadAdjustmentFactors>> = null
       if (interval === '1d' || interval === '1m') {
-        const localBars = await this.dataSyncManager.readBars({
+        let localBars = await this.dataSyncManager.readBars({
           instrumentId: instrument.instrumentId,
           interval,
           adjustment,
           start: request.query.start,
           end: request.query.end,
+          asOf,
         })
+        if (!localBars && adjustment !== 'none') {
+          loadedFactors = await loadAdjustmentFactors(instrument)
+          if (loadedFactors) {
+            await this.dataSyncManager.storeAdjustmentFactors(instrument, loadedFactors)
+            localBars = await this.dataSyncManager.readBars({
+              instrumentId: instrument.instrumentId,
+              interval,
+              adjustment,
+              start: request.query.start,
+              end: request.query.end,
+              asOf,
+            })
+          }
+        }
         if (localBars) {
           const fetchedAt = new Date().toISOString()
           return {
@@ -1084,15 +1163,40 @@ export class EvaHttpService extends Service {
               complete: bar.complete,
             })),
             page: { next_cursor: null },
-            meta: meta([{
-              provider: 'local-duckdb',
-              upstream: 'local',
-              fetched_at: fetchedAt,
-            }]),
+            meta: meta([
+              {
+                provider: 'local-duckdb',
+                upstream: 'local',
+                fetched_at: fetchedAt,
+              },
+              ...(loadedFactors ? [{
+                provider: loadedFactors.provider,
+                upstream: loadedFactors.upstream,
+                fetched_at: fetchedAt,
+              }] : []),
+            ]),
           }
         }
       }
       try {
+        const hasFactorCoverage = adjustment === 'none' ||
+          await this.dataSyncManager.hasAdjustmentFactorCoverage(
+            instrument.instrumentId,
+            asOf,
+          )
+        if (adjustment !== 'none' && !loadedFactors && !hasFactorCoverage) {
+          loadedFactors = await loadAdjustmentFactors(instrument)
+          if (!loadedFactors) {
+            return reply.code(422).type('application/problem+json').send({
+              type: 'urn:eva:problem:adjustment-factors-unavailable',
+              title: 'Adjustment factors unavailable', status: 422,
+              code: 'ADJUSTMENT_FACTORS_UNAVAILABLE',
+              detail: 'No enabled provider supplies adjustment factors for this equity.',
+              retryable: false, request_id: `req_${randomUUID()}`,
+            })
+          }
+          await this.dataSyncManager.storeAdjustmentFactors(instrument, loadedFactors)
+        }
         const result = await routeInstrumentData({
           providers: ctx.marketProviderRegistry.list(),
           instrument,
@@ -1106,7 +1210,7 @@ export class EvaHttpService extends Service {
               interval,
               start: request.query.start,
               end: request.query.end,
-              adjustment,
+              adjustment: 'none',
             }),
         })
         const cacheWarnings: string[] = []
@@ -1120,15 +1224,33 @@ export class EvaHttpService extends Service {
               interval,
               start: request.query.start,
               end: request.query.end,
-              adjustment,
+              adjustment: 'none',
             })
           } catch {
             cacheWarnings.push('local DuckDB cache write failed')
           }
         }
+        const responseBars = adjustment === 'none'
+          ? result.value
+          : await this.dataSyncManager.adjustBars(
+              instrument.instrumentId,
+              [...result.value].sort((left, right) =>
+                left.periodStart.localeCompare(right.periodStart)),
+              adjustment,
+              asOf,
+            )
+        if (!responseBars) {
+          return reply.code(422).type('application/problem+json').send({
+            type: 'urn:eva:problem:adjustment-factors-unavailable',
+            title: 'Adjustment factors unavailable', status: 422,
+            code: 'ADJUSTMENT_FACTORS_UNAVAILABLE',
+            detail: 'Adjustment factors do not cover the requested as_of date.',
+            retryable: false, request_id: `req_${randomUUID()}`,
+          })
+        }
         return {
           schema: 'eva.bar-list.v1',
-          data: [...result.value]
+          data: [...responseBars]
             .sort((left, right) => left.periodStart.localeCompare(right.periodStart))
             .map((bar) => ({
               instrument_id: instrument.instrumentId,
@@ -1153,6 +1275,11 @@ export class EvaHttpService extends Service {
               fetched_at: result.observedAt,
               ...(result.value[0]?.source ? { upstream: result.value[0].source } : {}),
             },
+            ...(loadedFactors ? [{
+              provider: loadedFactors.provider,
+              fetched_at: result.observedAt,
+              ...(loadedFactors.upstream ? { upstream: loadedFactors.upstream } : {}),
+            }] : []),
           ], false, cacheWarnings),
         }
       } catch (error) {

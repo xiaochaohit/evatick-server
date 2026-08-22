@@ -5,12 +5,14 @@ import { join } from 'node:path'
 
 import {
   ProviderError,
+  type AdjustmentFactorsCall,
   type BarsCall,
   type ConstituentsCall,
   type DataSourceCheckCall,
   type DataSourceCheckResult,
   type InstrumentProvider,
   type ProviderBar,
+  type ProviderAdjustmentFactor,
   type ProviderConstituent,
   type ProviderInstrument,
   type ProviderQuote,
@@ -36,6 +38,7 @@ export type AkshareRequest =
       instrumentType: 'equity' | 'index'
       providerSymbol: string
     }
+  | { operation: 'adjustment_factors'; providerSymbol: string }
   | { operation: 'constituents'; providerSymbol: string }
 
 export interface AkshareResult {
@@ -178,7 +181,7 @@ export class AkshareProvider implements InstrumentProvider {
       id: 'sina', name: '新浪财经',
       categories: ['equity', 'index'],
       capabilities: {
-        equity: ['日线', '分时', '行情快照'],
+        equity: ['日线', '分时', '行情快照', '复权因子'],
         index: ['日线', '分时', '行情快照'],
       },
     },
@@ -316,6 +319,36 @@ export class AkshareProvider implements InstrumentProvider {
         turnover: asText(pick(record, 'amount', '成交额')) ?? null,
         adjustment: call.adjustment,
         complete: minutes ? new Date(periodEnd).getTime() <= Date.now() : true,
+      }]
+    })
+  }
+
+  async getAdjustmentFactors(
+    call: AdjustmentFactorsCall,
+  ): Promise<readonly ProviderAdjustmentFactor[]> {
+    if (call.providerSymbol.startsWith('csi') ||
+      call.providerSymbol.startsWith('sh000') ||
+      call.providerSymbol.startsWith('sz399')) {
+      throw new ProviderError(
+        'UNSUPPORTED_INSTRUMENT_TYPE',
+        'price adjustment factors are only available for equities',
+        false,
+      )
+    }
+    const result = await this.run({
+      operation: 'adjustment_factors',
+      providerSymbol: call.providerSymbol,
+    }, call.signal)
+    return result.data.flatMap((record): ProviderAdjustmentFactor[] => {
+      const effectiveDate = asText(pick(record, 'date', '日期'))
+      const cumulativeFactor = asText(pick(record, 'hfq_factor', 'factor', '复权因子'))
+      if (!effectiveDate || !cumulativeFactor || !Number.isFinite(Number(cumulativeFactor))) {
+        return []
+      }
+      return [{
+        source: result.source,
+        effectiveDate: effectiveDate.slice(0, 10),
+        cumulativeFactor,
       }]
     })
   }

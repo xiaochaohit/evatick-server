@@ -326,6 +326,18 @@ def _market_data(
     raise SourcesExhausted(errors)
 
 
+def _adjustment_factors(
+    akshare: Any, provider_symbol: str
+) -> dict[str, Any]:
+    if provider_symbol.startswith("csi"):
+        raise ValueError("price adjustment factors are only available for equities")
+    records = _records(akshare.stock_zh_a_daily(
+        symbol=provider_symbol,
+        adjust="hfq-factor",
+    ))
+    return {"data": records, "source": "sina"}
+
+
 def _health_check(
     akshare: Any, source: str, instrument_type: str
 ) -> dict[str, Any]:
@@ -384,6 +396,8 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
         )
     if operation in {"bars", "quote"}:
         return _market_data(akshare, request)
+    if operation == "adjustment_factors":
+        return _adjustment_factors(akshare, request["providerSymbol"])
     if operation == "constituents":
         symbol = request["providerSymbol"]
         for prefix in ("csi", "sh", "sz"):
