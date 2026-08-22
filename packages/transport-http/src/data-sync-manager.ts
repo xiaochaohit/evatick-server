@@ -61,6 +61,9 @@ export interface DataSyncRun {
   } | null
   started_at: string
   finished_at: string | null
+  failed_instrument_ids: readonly string[]
+  target_instrument_ids?: readonly string[]
+  retry_of_run_id?: string
   errors: readonly {
     instrument_id: string
     symbol: string
@@ -681,6 +684,7 @@ export class DataSyncManager {
       current_instrument: null,
       started_at: new Date().toISOString(),
       finished_at: null,
+      failed_instrument_ids: [],
       errors: [],
     }
     this.activeRun = run
@@ -704,12 +708,14 @@ export class DataSyncManager {
     }
 
     const catalog = await this.dependencies.loadInstruments()
-    const instruments = catalog
-      .filter((instrument) =>
-        previous.instrument_types.includes(instrument.type) &&
-        instrument.capabilities.includes('bars'),
-      )
-      .slice(0, previous.limit ?? undefined)
+    const instruments = previous.target_instrument_ids
+      ? this.resolveInstruments(catalog, previous.target_instrument_ids)
+      : catalog
+        .filter((instrument) =>
+          previous.instrument_types.includes(instrument.type) &&
+          instrument.capabilities.includes('bars'),
+        )
+        .slice(0, previous.limit ?? undefined)
     if (instruments.length !== previous.total) {
       throw new Error('DATA_SYNC_CATALOG_CHANGED')
     }
@@ -728,6 +734,62 @@ export class DataSyncManager {
     await this.persistRun(run)
     this.launch(run, instruments.slice(previous.completed))
     return run
+  }
+
+  async retryFailures(): Promise<DataSyncRun> {
+    await this.ready
+    if (this.activeRun) throw new Error('DATA_SYNC_ALREADY_RUNNING')
+
+    const previous = this.lastRun
+    const failedInstrumentIds = previous?.failed_instrument_ids?.length
+      ? [...new Set(previous.failed_instrument_ids)]
+      : [...new Set(previous?.errors
+        .map((error) => error.instrument_id)
+        .filter((instrumentId) => instrumentId) ?? [])]
+    if (!previous || failedInstrumentIds.length === 0) {
+      throw new Error('DATA_SYNC_NO_FAILED_INSTRUMENTS')
+    }
+
+    const catalog = await this.dependencies.loadInstruments()
+    const instruments = this.resolveInstruments(catalog, failedInstrumentIds)
+    if (instruments.length !== failedInstrumentIds.length) {
+      throw new Error('DATA_SYNC_CATALOG_CHANGED')
+    }
+
+    const run: DataSyncRun = {
+      ...previous,
+      run_id: randomUUID(),
+      status: 'running',
+      limit: instruments.length,
+      total: instruments.length,
+      completed: 0,
+      succeeded: 0,
+      failed: 0,
+      bars_written: 0,
+      current_instrument: null,
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      failed_instrument_ids: [],
+      target_instrument_ids: failedInstrumentIds,
+      retry_of_run_id: previous.run_id,
+      errors: [],
+    }
+    this.activeRun = run
+    this.cancelled = false
+    await this.persistRun(run)
+    this.launch(run, instruments)
+    return run
+  }
+
+  private resolveInstruments(
+    catalog: readonly CatalogInstrument[],
+    instrumentIds: readonly string[],
+  ): CatalogInstrument[] {
+    const byId = new Map(catalog.map((instrument) => [instrument.instrumentId, instrument]))
+    return instrumentIds
+      .map((instrumentId) => byId.get(instrumentId))
+      .filter((instrument): instrument is CatalogInstrument =>
+        instrument !== undefined && instrument.capabilities.includes('bars'))
   }
 
   private launch(
@@ -1191,6 +1253,9 @@ export class DataSyncManager {
         ...storedRun,
         interval: storedRun.interval ?? '1d',
         lookback_days: storedRun.lookback_days ?? 10,
+        failed_instrument_ids: storedRun.failed_instrument_ids ?? storedRun.errors
+          .map((error) => error.instrument_id)
+          .filter((instrumentId) => instrumentId),
         status: latestRow.status as DataSyncRun['status'],
         finished_at: typeof latestRow.finished_at === 'string'
           ? latestRow.finished_at.replace(' ', 'T') + 'Z'
@@ -1331,6 +1396,7 @@ export class DataSyncManager {
         run.bars_written += result.bars.length
       } catch (error) {
         run.failed += 1
+        run.failed_instrument_ids = [...run.failed_instrument_ids, instrument.instrumentId]
         if (run.errors.length < MAX_ERRORS) {
           run.errors = [...run.errors, {
             instrument_id: instrument.instrumentId,

@@ -636,6 +636,29 @@ export class EvaHttpService extends Service {
       }
     })
 
+    this.app.post('/v1/data-sync/retry-failures', async (_request, reply) => {
+      try {
+        const run = await this.dataSyncManager.retryFailures()
+        return reply.code(202).send({ schema: 'eva.data-sync-run.v1', data: run })
+      } catch (error) {
+        const code = error instanceof Error ? error.message : 'DATA_SYNC_RETRY_FAILED'
+        const detail = code === 'DATA_SYNC_ALREADY_RUNNING'
+          ? 'Only one data sync run can execute at a time.'
+          : code === 'DATA_SYNC_CATALOG_CHANGED'
+            ? 'One or more failed instruments are no longer available in the catalog.'
+            : 'There are no failed instruments in the latest data sync run.'
+        return reply.code(409).type('application/problem+json').send({
+          type: `urn:eva:problem:${code.toLowerCase().replaceAll('_', '-')}`,
+          title: 'Failed instruments could not be retried',
+          status: 409,
+          code,
+          detail,
+          retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+    })
+
     this.app.post<{
       Body: {
         interval?: '1m' | '1d'

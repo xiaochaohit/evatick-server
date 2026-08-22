@@ -16,10 +16,16 @@ async function waitForRun(url: string) {
       data: {
         active_run: unknown
         last_run: {
+          run_id: string
           status: string
           interval: string
+          total: number
           succeeded: number
+          failed: number
           bars_written: number
+          failed_instrument_ids: string[]
+          retry_of_run_id?: string
+          errors: { instrument_id: string; symbol: string; message: string }[]
         } | null
         storage: { instruments: number; daily_bars: number; minute_bars: number }
       }
@@ -297,6 +303,8 @@ describe('local historical data synchronization', () => {
       expect(page).toContain("button.textContent='同步中'")
       expect(page).toContain('当前定时任务')
       expect(page).toContain('添加定时任务')
+      expect(page).toContain('仅重试失败标的')
+      expect(page).toContain('/v1/data-sync/retry-failures')
       expect(page).toContain('data-schedule-id')
       expect(page).toContain('aria-label="管理目录"')
       expect(page).toContain('href="/admin"')
@@ -478,6 +486,79 @@ describe('local historical data synchronization', () => {
       const completed = await waitForRun(server.url)
       expect(completed.last_run).toMatchObject({ status: 'completed', succeeded: 2 })
       expect(requestedSymbols).toEqual(['sh600000', 'sh600001'])
+    } finally {
+      await server.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('records every failed instrument and retries only those instruments', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'eva-data-retry-'))
+    const requestedSymbols: string[] = []
+    const symbols = Array.from({ length: 22 }, (_, index) => String(600000 + index))
+    const failedSymbols = symbols.slice(1)
+    let retryPhase = false
+    const provider: InstrumentProvider = {
+      id: 'retry-fixture',
+      async listInstruments() {
+        return symbols.map((symbol) => ({
+          type: 'equity' as const, market: 'CN' as const, name: `股票${symbol}`,
+          symbol, providerSymbol: `sh${symbol}`, venue: 'XSHG', currency: 'CNY',
+          status: 'active' as const, capabilities: ['bars' as const],
+        }))
+      },
+      async getBars(call) {
+        requestedSymbols.push(call.providerSymbol)
+        if (call.providerSymbol !== 'sh600000' && !retryPhase) {
+          throw new Error(`temporary failure for ${call.providerSymbol}`)
+        }
+        return [{
+          source: 'sina', interval: '1d', tradingDate: '2026-01-12',
+          periodStart: '2026-01-12T00:00:00+08:00',
+          periodEnd: '2026-01-12T23:59:59+08:00', currency: 'CNY',
+          open: '10', high: '11', low: '9', close: '10.5', volume: 100,
+          turnover: '1000', adjustment: call.adjustment, complete: true,
+        }]
+      },
+    }
+    const server = await createEvaTickServer({
+      historyPath: join(directory, 'history.duckdb'), healthCheckIntervalMs: 0,
+    })
+    await server.mountProvider(provider)
+
+    try {
+      const started = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['equity'], start: '2026-01-01', end: '2026-01-31',
+          adjustment: 'none',
+        }),
+      })
+      expect(started.status).toBe(202)
+      const first = await waitForRun(server.url)
+      expect(first.last_run).toMatchObject({
+        status: 'completed_with_errors', succeeded: 1, failed: 21,
+        failed_instrument_ids: failedSymbols.map((symbol) =>
+          `cn:equity:XSHG:${symbol}`),
+      })
+      expect(first.last_run!.errors).toHaveLength(20)
+      const firstRunId = first.last_run!.run_id
+
+      retryPhase = true
+      const retried = await fetch(`${server.url}/v1/data-sync/retry-failures`, {
+        method: 'POST',
+      })
+      expect(retried.status).toBe(202)
+      const completed = await waitForRun(server.url)
+      expect(completed.last_run).toMatchObject({
+        status: 'completed', total: 21, succeeded: 21, failed: 0,
+        failed_instrument_ids: [], retry_of_run_id: firstRunId,
+      })
+      expect(requestedSymbols[0]).toBe('sh600000')
+      expect(requestedSymbols.filter((symbol) => symbol === 'sh600000')).toHaveLength(1)
+      expect(requestedSymbols.slice(-21)).toEqual(
+        failedSymbols.map((symbol) => `sh${symbol}`),
+      )
     } finally {
       await server.close()
       await rm(directory, { recursive: true, force: true })

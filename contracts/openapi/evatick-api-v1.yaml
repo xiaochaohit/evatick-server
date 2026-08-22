@@ -182,6 +182,23 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/data-sync/retry-failures:
+    post:
+      operationId: retryFailedDataSyncInstruments
+      summary: Start a new run containing only failed instruments from the latest run
+      responses:
+        '202':
+          description: Failed instruments retry accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSyncRunResponse'
+        default:
+          description: No failed instruments exist, the catalog changed, or another run is active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/instruments:
     get:
       security:
@@ -596,6 +613,17 @@ components:
         bars_written:
           type: integer
           minimum: 0
+        failed_instrument_ids:
+          type: array
+          items:
+            type: string
+        target_instrument_ids:
+          type: array
+          items:
+            type: string
+        retry_of_run_id:
+          type: string
+          format: uuid
     DataSyncRunResponse:
       type: object
       additionalProperties: false
