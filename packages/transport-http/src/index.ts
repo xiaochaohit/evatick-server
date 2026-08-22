@@ -378,15 +378,23 @@ export class EvaHttpService extends Service {
     })
 
     this.app.get<{
-      Querystring: { q?: string; type?: string; limit?: string; offset?: string }
+      Querystring: {
+        q?: string
+        type?: string
+        interval?: string
+        limit?: string
+        offset?: string
+      }
     }>('/v1/local-data/instruments', async (request, reply) => {
       const limit = Number(request.query.limit ?? 30)
       const offset = Number(request.query.offset ?? 0)
       const instrumentType = request.query.type
+      const interval = request.query.interval
       if (
         !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         !Number.isInteger(offset) || offset < 0 ||
         (instrumentType !== undefined && instrumentType !== 'equity' && instrumentType !== 'index') ||
+        (interval !== undefined && interval !== '1m' && interval !== '1d') ||
         (request.query.q?.length ?? 0) > 100
       ) {
         return reply.code(400).type('application/problem+json').send({
@@ -394,7 +402,7 @@ export class EvaHttpService extends Service {
           title: 'Invalid local data query',
           status: 400,
           code: 'INVALID_LOCAL_DATA_QUERY',
-          detail: 'q, type, limit, or offset is invalid.',
+          detail: 'q, type, interval, limit, or offset is invalid.',
           retryable: false,
           request_id: `req_${randomUUID()}`,
         })
@@ -403,6 +411,7 @@ export class EvaHttpService extends Service {
         this.dataSyncManager.browseInstruments({
           query: request.query.q,
           instrumentType,
+          interval,
           limit,
           offset,
         }),
@@ -412,30 +421,77 @@ export class EvaHttpService extends Service {
         schema: 'eva.local-instrument-list.v1',
         data: result.items,
         page: { total: result.total, limit, offset },
-        meta: { storage: status.storage, generated_at: new Date().toISOString() },
+        meta: { local_only: true, storage: status.storage, generated_at: new Date().toISOString() },
       }
     })
 
     this.app.get<{
       Params: { instrumentId: string }
-      Querystring: { limit?: string }
+      Querystring: {
+        interval?: string
+        start?: string
+        end?: string
+        limit?: string
+        offset?: string
+      }
     }>('/v1/local-data/instruments/:instrumentId/bars', async (request, reply) => {
-      const limit = Number(request.query.limit ?? 20)
-      if (!Number.isInteger(limit) || limit < 1 || limit > 250) {
+      const interval = request.query.interval ?? '1d'
+      const start = request.query.start
+      const end = request.query.end
+      const limit = Number(request.query.limit ?? (interval === '1m' ? 500 : 20))
+      const offset = Number(request.query.offset ?? 0)
+      const validDate = (value: string | undefined) =>
+        value === undefined || /^\d{4}-\d{2}-\d{2}$/.test(value)
+      if (
+        (interval !== '1m' && interval !== '1d') ||
+        !validDate(start) || !validDate(end) || (start && end && start > end) ||
+        !Number.isInteger(limit) || limit < 1 || limit > 500 ||
+        !Number.isInteger(offset) || offset < 0
+      ) {
         return reply.code(400).type('application/problem+json').send({
           type: 'urn:eva:problem:invalid-local-bar-query',
           title: 'Invalid local bar query',
           status: 400,
           code: 'INVALID_LOCAL_BAR_QUERY',
-          detail: 'limit must be an integer between 1 and 250.',
+          detail: 'interval, start, end, limit (1..500), or offset is invalid.',
           retryable: false,
           request_id: `req_${randomUUID()}`,
         })
       }
+      const result = await this.dataSyncManager.browseBars({
+        instrumentId: request.params.instrumentId,
+        interval,
+        start,
+        end,
+        limit,
+        offset,
+      })
       return {
         schema: 'eva.local-bar-list.v1',
-        data: await this.dataSyncManager.browseBars(request.params.instrumentId, limit),
-        meta: { generated_at: new Date().toISOString() },
+        data: result.items,
+        page: { total: result.total, limit, offset },
+        meta: { local_only: true, generated_at: new Date().toISOString() },
+      }
+    })
+
+    this.app.get<{
+      Params: { instrumentId: string }
+      Querystring: { interval?: string }
+    }>('/v1/local-data/instruments/:instrumentId/coverage', async (request, reply) => {
+      const interval = request.query.interval ?? '1d'
+      if (interval !== '1m' && interval !== '1d') {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-local-coverage-query',
+          title: 'Invalid local coverage query', status: 400,
+          code: 'INVALID_LOCAL_COVERAGE_QUERY',
+          detail: 'interval must be either 1m or 1d.', retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      return {
+        schema: 'eva.local-coverage.v1',
+        data: await this.dataSyncManager.browseCoverage(request.params.instrumentId, interval),
+        meta: { local_only: true, generated_at: new Date().toISOString() },
       }
     })
 

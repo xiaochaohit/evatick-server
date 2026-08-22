@@ -91,6 +91,48 @@ describe('local historical data synchronization', () => {
         ],
         meta: { sources: [{ provider: 'local-duckdb', upstream: 'local' }] },
       })
+
+      const browserList = await fetch(
+        `${server.url}/v1/local-data/instruments?interval=1m&limit=10&offset=0`,
+      )
+      expect(browserList.status).toBe(200)
+      expect(await browserList.json()).toMatchObject({
+        data: [{
+          instrument_id: 'cn:equity:XSHG:600000',
+          minute_records: 2,
+          minute_first_trading_date: '2026-05-22',
+          minute_last_trading_date: '2026-08-21',
+          minute_coverage_status: 'complete',
+        }],
+        meta: { local_only: true },
+      })
+
+      const coverage = await fetch(
+        `${server.url}/v1/local-data/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/coverage?interval=1m`,
+      )
+      expect(coverage.status).toBe(200)
+      expect(await coverage.json()).toMatchObject({
+        data: {
+          interval: '1m', requested_start: '2026-05-22', requested_end: '2026-08-22',
+          actual_start: '2026-05-22', actual_end: '2026-08-21', records: 2,
+          status: 'complete', sources: ['sina'],
+          daily: [
+            { trading_date: '2026-08-21', records: 1, missing_records: 239, status: 'partial' },
+            { trading_date: '2026-05-22', records: 1, missing_records: 239, status: 'partial' },
+          ],
+        },
+        meta: { local_only: true },
+      })
+
+      const browserBars = await fetch(
+        `${server.url}/v1/local-data/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/bars?interval=1m&start=2026-08-21&end=2026-08-21&limit=1&offset=0`,
+      )
+      expect(browserBars.status).toBe(200)
+      expect(await browserBars.json()).toMatchObject({
+        data: [{ interval: '1m', trading_date: '2026-08-21', close: '10.2' }],
+        page: { total: 1, limit: 1, offset: 0 },
+        meta: { local_only: true },
+      })
       expect(requestedIntervals).toEqual(['1m'])
     } finally {
       await server.close()
@@ -258,6 +300,9 @@ describe('local historical data synchronization', () => {
       const browserPage = await browserResponse.text()
       expect(browserPage).toContain('数据浏览')
       expect(browserPage).toContain('数据源健康')
+      expect(browserPage).toContain('1 分钟')
+      expect(browserPage).toContain('LOCAL ONLY')
+      expect(browserPage).toContain('每日分钟完整性')
       expect(browserPage).toContain('class="active" aria-current="page" href="/admin"')
 
       const scheduleResponse = await fetch(`${server.url}/v1/data-sync/schedule`, {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { stat } from 'node:fs/promises'
 
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 
@@ -65,6 +66,7 @@ export interface DataSyncStatus {
     instruments: number
     daily_bars: number
     minute_bars: number
+    database_bytes: number | null
     first_trading_date: string | null
     last_trading_date: string | null
     first_minute_trading_date: string | null
@@ -108,19 +110,53 @@ export interface LocalInstrumentSummary {
   venue: string | null
   publisher: string | null
   records: number
-  first_trading_date: string
-  last_trading_date: string
-  latest_close: string
+  first_trading_date: string | null
+  last_trading_date: string | null
+  latest_close: string | null
+  daily_records: number
+  daily_first_trading_date: string | null
+  daily_last_trading_date: string | null
+  daily_latest_close: string | null
+  minute_records: number
+  minute_first_trading_date: string | null
+  minute_last_trading_date: string | null
+  minute_latest_close: string | null
+  minute_requested_start: string | null
+  minute_requested_end: string | null
+  minute_coverage_status: 'complete' | 'partial' | 'none'
 }
 
 export interface LocalBarSummary {
+  interval: DataSyncInterval
   trading_date: string
+  period_start: string
+  period_end: string
   open: string
   high: string
   low: string
   close: string
   volume: number | null
   turnover: string | null
+  complete: boolean
+}
+
+export interface LocalCoverageSummary {
+  interval: DataSyncInterval
+  requested_start: string | null
+  requested_end: string | null
+  actual_start: string | null
+  actual_end: string | null
+  records: number
+  status: 'complete' | 'partial' | 'none'
+  sources: readonly string[]
+  last_fetched_at: string | null
+  daily: readonly {
+    trading_date: string
+    records: number
+    expected_records: number
+    missing_records: number
+    status: 'complete' | 'partial'
+  }[]
 }
 
 interface DataSyncDependencies {
@@ -207,6 +243,7 @@ export class DataSyncManager {
 
   async status(): Promise<DataSyncStatus> {
     await this.ready
+    const databaseBytes = await this.databaseBytes()
     const reader = await this.db.runAndReadAll(`
       SELECT
         (SELECT count(*) FROM instruments)::INTEGER AS instruments,
@@ -224,6 +261,7 @@ export class DataSyncManager {
         instruments: Number(row.instruments ?? 0),
         daily_bars: Number(row.daily_bars ?? 0),
         minute_bars: Number(row.minute_bars ?? 0),
+        database_bytes: databaseBytes,
         first_trading_date: typeof row.first_trading_date === 'string'
           ? row.first_trading_date
           : null,
@@ -243,6 +281,22 @@ export class DataSyncManager {
     }
   }
 
+  private async databaseBytes(): Promise<number | null> {
+    if (this.dependencies.databasePath === ':memory:') return null
+    const sizes = await Promise.all([
+      this.dependencies.databasePath,
+      `${this.dependencies.databasePath}.wal`,
+    ].map(async (path) => {
+      try {
+        return (await stat(path)).size
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+        throw error
+      }
+    }))
+    return sizes.reduce((sum, size) => sum + size, 0)
+  }
+
   async updateSchedule(schedule: Omit<DataSyncSchedule, 'next_run_at' | 'last_triggered_at'>): Promise<DataSyncSchedule> {
     await this.ready
     this.schedule = {
@@ -258,6 +312,7 @@ export class DataSyncManager {
   async browseInstruments(request: {
     query?: string
     instrumentType?: InstrumentType
+    interval?: DataSyncInterval
     limit: number
     offset: number
   }): Promise<{ total: number; items: readonly LocalInstrumentSummary[] }> {
@@ -267,79 +322,288 @@ export class DataSyncManager {
     const filters = {
       query: `%${query.toLowerCase()}%`,
       instrument_type: instrumentType,
+      interval: request.interval ?? '',
     }
     const totalReader = await this.db.runAndReadAll(`
+      WITH daily AS (
+        SELECT instrument_id, count(*)::BIGINT AS records
+        FROM daily_bars WHERE adjustment = 'none' GROUP BY instrument_id
+      ), minute AS (
+        SELECT instrument_id, count(*)::BIGINT AS records
+        FROM minute_bars WHERE adjustment = 'none' GROUP BY instrument_id
+      )
       SELECT count(*)::INTEGER AS total
       FROM instruments i
+      LEFT JOIN daily d ON d.instrument_id = i.instrument_id
+      LEFT JOIN minute m ON m.instrument_id = i.instrument_id
       WHERE ($instrument_type = '' OR i.instrument_type = $instrument_type)
         AND ($query = '%%' OR lower(i.symbol) LIKE $query OR lower(i.name) LIKE $query)
-        AND EXISTS (
-          SELECT 1 FROM daily_bars b
-          WHERE b.instrument_id = i.instrument_id AND b.adjustment = 'none'
-        )
+        AND (($interval = '' AND (coalesce(d.records, 0) > 0 OR coalesce(m.records, 0) > 0))
+          OR ($interval = '1d' AND coalesce(d.records, 0) > 0)
+          OR ($interval = '1m' AND coalesce(m.records, 0) > 0))
     `, filters)
     const reader = await this.db.runAndReadAll(`
-      WITH selected AS (
-        SELECT *
+      WITH daily AS (
+        SELECT instrument_id, count(*)::BIGINT AS records,
+          min(trading_date)::VARCHAR AS first_date,
+          max(trading_date)::VARCHAR AS last_date,
+          arg_max(close, trading_date)::VARCHAR AS latest_close
+        FROM daily_bars WHERE adjustment = 'none' GROUP BY instrument_id
+      ), minute AS (
+        SELECT instrument_id, count(*)::BIGINT AS records,
+          min(trading_date)::VARCHAR AS first_date,
+          max(trading_date)::VARCHAR AS last_date,
+          arg_max(close, period_start)::VARCHAR AS latest_close
+        FROM minute_bars WHERE adjustment = 'none' GROUP BY instrument_id
+      ), coverage AS (
+        SELECT instrument_id,
+          requested_start::VARCHAR AS requested_start,
+          requested_end::VARCHAR AS requested_end
+        FROM minute_sync_coverage WHERE adjustment = 'none'
+      ), selected AS (
+        SELECT i.*
         FROM instruments i
+        LEFT JOIN daily d ON d.instrument_id = i.instrument_id
+        LEFT JOIN minute m ON m.instrument_id = i.instrument_id
         WHERE ($instrument_type = '' OR i.instrument_type = $instrument_type)
           AND ($query = '%%' OR lower(i.symbol) LIKE $query OR lower(i.name) LIKE $query)
-          AND EXISTS (
-            SELECT 1 FROM daily_bars b
-            WHERE b.instrument_id = i.instrument_id AND b.adjustment = 'none'
-          )
+          AND (($interval = '' AND (coalesce(d.records, 0) > 0 OR coalesce(m.records, 0) > 0))
+            OR ($interval = '1d' AND coalesce(d.records, 0) > 0)
+            OR ($interval = '1m' AND coalesce(m.records, 0) > 0))
         ORDER BY i.instrument_type, i.symbol
         LIMIT $limit OFFSET $offset
       )
       SELECT
         i.instrument_id, i.instrument_type, i.symbol, i.name, i.venue, i.publisher,
-        count(*)::BIGINT AS records,
-        min(b.trading_date)::VARCHAR AS first_trading_date,
-        max(b.trading_date)::VARCHAR AS last_trading_date,
-        arg_max(b.close, b.trading_date)::VARCHAR AS latest_close
+        coalesce(d.records, 0)::BIGINT AS daily_records,
+        d.first_date AS daily_first_date, d.last_date AS daily_last_date,
+        d.latest_close AS daily_latest_close,
+        coalesce(m.records, 0)::BIGINT AS minute_records,
+        m.first_date AS minute_first_date, m.last_date AS minute_last_date,
+        m.latest_close AS minute_latest_close,
+        c.requested_start, c.requested_end
       FROM selected i
-      JOIN daily_bars b ON b.instrument_id = i.instrument_id AND b.adjustment = 'none'
-      GROUP BY i.instrument_id, i.instrument_type, i.symbol, i.name, i.venue, i.publisher
+      LEFT JOIN daily d ON d.instrument_id = i.instrument_id
+      LEFT JOIN minute m ON m.instrument_id = i.instrument_id
+      LEFT JOIN coverage c ON c.instrument_id = i.instrument_id
       ORDER BY i.instrument_type, i.symbol
     `, { ...filters, limit: request.limit, offset: request.offset })
     return {
       total: Number(totalReader.getRowObjectsJson()[0]?.total ?? 0),
-      items: reader.getRowObjectsJson().map((row) => ({
-        instrument_id: String(row.instrument_id),
-        instrument_type: row.instrument_type as InstrumentType,
-        symbol: String(row.symbol),
-        name: String(row.name),
-        venue: row.venue === null ? null : String(row.venue),
-        publisher: row.publisher === null ? null : String(row.publisher),
-        records: Number(row.records),
-        first_trading_date: String(row.first_trading_date),
-        last_trading_date: String(row.last_trading_date),
-        latest_close: String(row.latest_close),
-      })),
+      items: reader.getRowObjectsJson().map((row) => {
+        const minuteRecords = Number(row.minute_records)
+        const minuteFirst = row.minute_first_date === null ? null : String(row.minute_first_date)
+        const minuteLast = row.minute_last_date === null ? null : String(row.minute_last_date)
+        const requestedStart = row.requested_start === null ? null : String(row.requested_start)
+        const requestedEnd = row.requested_end === null ? null : String(row.requested_end)
+        const minuteCoverageStatus = minuteRecords === 0
+          ? 'none' as const
+          : requestedStart && requestedEnd && minuteFirst && minuteLast &&
+              minuteFirst <= addDays(requestedStart, 10) &&
+              minuteLast >= subtractDays(requestedEnd, 10)
+            ? 'complete' as const
+            : 'partial' as const
+        const dailyRecords = Number(row.daily_records)
+        const useMinute = request.interval === '1m' || (dailyRecords === 0 && minuteRecords > 0)
+        const firstTradingDate = useMinute
+          ? minuteFirst
+          : row.daily_first_date === null ? null : String(row.daily_first_date)
+        const lastTradingDate = useMinute
+          ? minuteLast
+          : row.daily_last_date === null ? null : String(row.daily_last_date)
+        const latestClose = useMinute
+          ? row.minute_latest_close === null ? null : String(row.minute_latest_close)
+          : row.daily_latest_close === null ? null : String(row.daily_latest_close)
+        return {
+          instrument_id: String(row.instrument_id),
+          instrument_type: row.instrument_type as InstrumentType,
+          symbol: String(row.symbol),
+          name: String(row.name),
+          venue: row.venue === null ? null : String(row.venue),
+          publisher: row.publisher === null ? null : String(row.publisher),
+          records: useMinute ? minuteRecords : dailyRecords,
+          first_trading_date: firstTradingDate,
+          last_trading_date: lastTradingDate,
+          latest_close: latestClose,
+          daily_records: dailyRecords,
+          daily_first_trading_date: row.daily_first_date === null ? null : String(row.daily_first_date),
+          daily_last_trading_date: row.daily_last_date === null ? null : String(row.daily_last_date),
+          daily_latest_close: row.daily_latest_close === null ? null : String(row.daily_latest_close),
+          minute_records: minuteRecords,
+          minute_first_trading_date: minuteFirst,
+          minute_last_trading_date: minuteLast,
+          minute_latest_close: row.minute_latest_close === null ? null : String(row.minute_latest_close),
+          minute_requested_start: requestedStart,
+          minute_requested_end: requestedEnd,
+          minute_coverage_status: minuteCoverageStatus,
+        }
+      }),
     }
   }
 
   async browseBars(
-    instrumentId: string,
-    limit: number,
-  ): Promise<readonly LocalBarSummary[]> {
+    request: {
+      instrumentId: string
+      interval: DataSyncInterval
+      start?: string
+      end?: string
+      limit: number
+      offset: number
+    },
+  ): Promise<{ total: number; items: readonly LocalBarSummary[] }> {
     await this.ready
+    const filterParameters = {
+      instrument_id: request.instrumentId,
+      start: request.start ?? '',
+      end: request.end ?? '',
+    }
+    const pageParameters = {
+      ...filterParameters,
+      limit: request.limit,
+      offset: request.offset,
+    }
+    const table = request.interval === '1m' ? 'minute_bars' : 'daily_bars'
+    const totalReader = await this.db.runAndReadAll(`
+      SELECT count(*)::BIGINT AS total FROM ${table}
+      WHERE instrument_id = $instrument_id AND adjustment = 'none'
+        AND ($start = '' OR trading_date >= $start::DATE)
+        AND ($end = '' OR trading_date <= $end::DATE)
+    `, filterParameters)
+    if (request.interval === '1m') {
+      const reader = await this.db.runAndReadAll(`
+        SELECT trading_date::VARCHAR AS trading_date, period_start, period_end,
+          open, high, low, close, volume, turnover, complete
+        FROM minute_bars
+        WHERE instrument_id = $instrument_id AND adjustment = 'none'
+          AND ($start = '' OR trading_date >= $start::DATE)
+          AND ($end = '' OR trading_date <= $end::DATE)
+        ORDER BY period_start DESC
+        LIMIT $limit OFFSET $offset
+      `, pageParameters)
+      return {
+        total: Number(totalReader.getRowObjectsJson()[0]?.total ?? 0),
+        items: reader.getRowObjectsJson().map((row) => ({
+          interval: '1m',
+          trading_date: String(row.trading_date),
+          period_start: String(row.period_start),
+          period_end: String(row.period_end),
+          open: String(row.open), high: String(row.high), low: String(row.low),
+          close: String(row.close),
+          volume: row.volume === null ? null : Number(row.volume),
+          turnover: row.turnover === null ? null : String(row.turnover),
+          complete: Boolean(row.complete),
+        })),
+      }
+    }
     const reader = await this.db.runAndReadAll(`
       SELECT trading_date::VARCHAR AS trading_date, open, high, low, close, volume, turnover
       FROM daily_bars
       WHERE instrument_id = $instrument_id AND adjustment = 'none'
+        AND ($start = '' OR trading_date >= $start::DATE)
+        AND ($end = '' OR trading_date <= $end::DATE)
       ORDER BY trading_date DESC
-      LIMIT $limit
-    `, { instrument_id: instrumentId, limit })
-    return reader.getRowObjectsJson().map((row) => ({
-      trading_date: String(row.trading_date),
-      open: String(row.open),
-      high: String(row.high),
-      low: String(row.low),
-      close: String(row.close),
-      volume: row.volume === null ? null : Number(row.volume),
-      turnover: row.turnover === null ? null : String(row.turnover),
-    }))
+      LIMIT $limit OFFSET $offset
+    `, pageParameters)
+    return {
+      total: Number(totalReader.getRowObjectsJson()[0]?.total ?? 0),
+      items: reader.getRowObjectsJson().map((row) => {
+        const tradingDate = String(row.trading_date)
+        return {
+          interval: '1d',
+          trading_date: tradingDate,
+          period_start: `${tradingDate}T00:00:00+08:00`,
+          period_end: `${tradingDate}T23:59:59+08:00`,
+          open: String(row.open), high: String(row.high), low: String(row.low),
+          close: String(row.close),
+          volume: row.volume === null ? null : Number(row.volume),
+          turnover: row.turnover === null ? null : String(row.turnover),
+          complete: true,
+        }
+      }),
+    }
+  }
+
+  async browseCoverage(
+    instrumentId: string,
+    interval: DataSyncInterval,
+  ): Promise<LocalCoverageSummary> {
+    await this.ready
+    const barsTable = interval === '1m' ? 'minute_bars' : 'daily_bars'
+    const coverageTable = interval === '1m' ? 'minute_sync_coverage' : 'sync_coverage'
+    const reader = await this.db.runAndReadAll(`
+      SELECT
+        c.requested_start::VARCHAR AS requested_start,
+        c.requested_end::VARCHAR AS requested_end,
+        min(b.trading_date)::VARCHAR AS actual_start,
+        max(b.trading_date)::VARCHAR AS actual_end,
+        count(b.instrument_id)::BIGINT AS records,
+        string_agg(DISTINCT coalesce(b.upstream, b.provider), ',') AS sources,
+        max(b.fetched_at)::VARCHAR AS last_fetched_at
+      FROM (SELECT $instrument_id::VARCHAR AS instrument_id) i
+      LEFT JOIN ${coverageTable} c
+        ON c.instrument_id = i.instrument_id AND c.adjustment = 'none'
+      LEFT JOIN ${barsTable} b
+        ON b.instrument_id = i.instrument_id AND b.adjustment = 'none'
+      GROUP BY c.requested_start, c.requested_end
+    `, { instrument_id: instrumentId })
+    const row = reader.getRowObjectsJson()[0] ?? {}
+    const requestedStart = row.requested_start === null || row.requested_start === undefined
+      ? null
+      : String(row.requested_start)
+    const requestedEnd = row.requested_end === null || row.requested_end === undefined
+      ? null
+      : String(row.requested_end)
+    const actualStart = row.actual_start === null || row.actual_start === undefined
+      ? null
+      : String(row.actual_start)
+    const actualEnd = row.actual_end === null || row.actual_end === undefined
+      ? null
+      : String(row.actual_end)
+    const records = Number(row.records ?? 0)
+    const status = records === 0
+      ? 'none' as const
+      : requestedStart && requestedEnd && actualStart && actualEnd &&
+          actualStart <= addDays(requestedStart, 10) &&
+          actualEnd >= subtractDays(requestedEnd, 10)
+        ? 'complete' as const
+        : 'partial' as const
+    let daily: LocalCoverageSummary['daily'] = []
+    if (interval === '1m') {
+      const dailyReader = await this.db.runAndReadAll(`
+        SELECT trading_date::VARCHAR AS trading_date, count(*)::INTEGER AS records
+        FROM minute_bars
+        WHERE instrument_id = $instrument_id AND adjustment = 'none'
+        GROUP BY trading_date
+        ORDER BY trading_date DESC
+        LIMIT 120
+      `, { instrument_id: instrumentId })
+      daily = dailyReader.getRowObjectsJson().map((item) => {
+        const count = Number(item.records)
+        return {
+          trading_date: String(item.trading_date),
+          records: count,
+          expected_records: 240,
+          missing_records: Math.max(240 - count, 0),
+          status: count >= 240 ? 'complete' as const : 'partial' as const,
+        }
+      })
+    }
+    return {
+      interval,
+      requested_start: requestedStart,
+      requested_end: requestedEnd,
+      actual_start: actualStart,
+      actual_end: actualEnd,
+      records,
+      status,
+      sources: typeof row.sources === 'string' && row.sources
+        ? row.sources.split(',').sort()
+        : [],
+      last_fetched_at: row.last_fetched_at === null || row.last_fetched_at === undefined
+        ? null
+        : String(row.last_fetched_at).replace(' ', 'T') + 'Z',
+      daily,
+    }
   }
 
   async start(request: DataSyncRequest): Promise<DataSyncRun> {
