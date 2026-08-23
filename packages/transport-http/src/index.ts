@@ -546,6 +546,23 @@ export class EvaHttpService extends Service {
       return { schema: 'eva.data-sync-run-list.v1', data: await this.dataSyncManager.listRuns(limit) }
     })
 
+    this.app.delete('/v1/data-sync/runs', async (_request, reply) => {
+      try {
+        await this.dataSyncManager.clearRuns()
+        return reply.code(204).send()
+      } catch (error) {
+        const conflict = error instanceof Error && error.message === 'DATA_SYNC_ALREADY_RUNNING'
+        if (!conflict) throw error
+        return reply.code(409).type('application/problem+json').send({
+          type: 'urn:eva:problem:data-sync-already-running',
+          title: 'Data sync history could not be cleared', status: 409,
+          code: 'DATA_SYNC_ALREADY_RUNNING',
+          detail: 'Stop the active synchronization before clearing its history.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+    })
+
     this.app.get<{
       Params: { runId: string }
     }>('/v1/data-sync/runs/:runId/items', async (request, reply) => {

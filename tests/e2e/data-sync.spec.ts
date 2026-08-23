@@ -503,7 +503,8 @@ describe('local historical data synchronization', () => {
       expect(resumed.status).toBe(202)
       const completed = await waitForRun(server.url)
       expect(completed.last_run).toMatchObject({
-        status: 'completed', trigger: 'retry', succeeded: 1, total: 1,
+        status: 'completed', trigger: 'manual', succeeded: 2, failed: 0,
+        total: 2, retry_count: 1,
       })
       expect(requestedSymbols).toEqual(['sh600000', 'sh600001'])
     } finally {
@@ -566,11 +567,16 @@ describe('local historical data synchronization', () => {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       })
       expect(retry.status).toBe(202)
-      const retryRunId = ((await retry.json()) as { data: { run_id: string } }).data.run_id
+      const retriedSource = (await retry.json()) as {
+        data: { run_id: string; trigger: string; status: string; retry_count: number }
+      }
+      expect(retriedSource.data).toMatchObject({
+        run_id: firstRunId, trigger: 'manual', status: 'running', retry_count: 1,
+      })
       const retried = await waitForRun(server.url)
       expect(retried.last_run).toMatchObject({
-        trigger: 'retry', retry_of_run_id: firstRunId, status: 'completed',
-        total: 1, succeeded: 1, failed: 0,
+        run_id: firstRunId, trigger: 'manual', status: 'completed',
+        total: 2, succeeded: 2, failed: 0, retry_count: 1, remaining_failed: 0,
       })
 
       const runs = await fetch(`${server.url}/v1/data-sync/runs`).then((response) => response.json()) as {
@@ -580,26 +586,26 @@ describe('local historical data synchronization', () => {
           latest_retry_run_id: string | null; remaining_failed: number
         }[]
       }
-      expect(runs.data.slice(0, 2)).toMatchObject([
-        { trigger: 'retry', succeeded: 1 },
-        {
-          run_id: firstRunId, trigger: 'manual', status: 'completed_with_errors',
-          succeeded: 1, recovery_status: 'recovered', retry_count: 1,
-          latest_retry_run_id: retryRunId, remaining_failed: 0,
-        },
-      ])
+      expect(runs.data).toHaveLength(1)
+      expect(runs.data[0]).toMatchObject({
+        run_id: firstRunId, trigger: 'manual', status: 'completed',
+        succeeded: 2, failed: 0, recovery_status: 'recovered', retry_count: 1,
+        latest_retry_run_id: expect.any(String), remaining_failed: 0,
+      })
       const recoveredItems = await fetch(`${server.url}/v1/data-sync/runs/${firstRunId}/items`)
-        .then((response) => response.json()) as { data: { status: string }[] }
+        .then((response) => response.json()) as { data: { status: string; error: string | null }[] }
       expect(recoveredItems.data.map((item) => item.status).sort()).toEqual(['completed', 'recovered'])
+      expect(recoveredItems.data.find((item) => item.status === 'recovered')?.error).toBeNull()
 
-      const rerun = await fetch(`${server.url}/v1/data-sync/runs/${retryRunId}/retry`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ failed_only: false }),
+      const clear = await fetch(`${server.url}/v1/data-sync/runs`, { method: 'DELETE' })
+      expect(clear.status).toBe(204)
+      const afterClear = await fetch(`${server.url}/v1/data-sync`).then((response) => response.json())
+      expect(afterClear).toMatchObject({
+        data: { active_run: null, last_run: null, storage: { daily_bars: 2 } },
       })
-      expect(rerun.status).toBe(202)
-      expect((await waitForRun(server.url)).last_run).toMatchObject({
-        trigger: 'retry', retry_of_run_id: retryRunId, total: 1, succeeded: 1,
-      })
+      const runsAfterClear = await fetch(`${server.url}/v1/data-sync/runs`)
+        .then((response) => response.json()) as { data: unknown[] }
+      expect(runsAfterClear.data).toEqual([])
 
       const gaps = await fetch(
         `${server.url}/v1/data-sync/gaps?interval=1d&start=2026-08-21&end=2026-08-21&instrument_types=equity`,
