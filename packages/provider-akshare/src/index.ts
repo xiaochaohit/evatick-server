@@ -90,6 +90,13 @@ function shanghaiDateTime(value: string): string {
   return value
 }
 
+function isoDate(value: string): string {
+  if (/^\d{8}$/.test(value)) {
+    return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+  }
+  return value.slice(0, 10)
+}
+
 function subtractMinutes(value: string, minutes: number): string {
   const shifted = new Date(new Date(value).getTime() - minutes * 60_000 + 8 * 3_600_000)
   return `${shifted.toISOString().slice(0, 19)}+08:00`
@@ -352,12 +359,13 @@ export class AkshareProvider implements InstrumentProvider {
     }, call.signal)
     return result.data.flatMap((record): ProviderBar[] => {
       const timestamp = asText(pick(record, 'day', '时间', 'datetime'))
-      const date = asText(pick(record, 'date', '日期')) ?? timestamp?.slice(0, 10)
+      const rawDate = asText(pick(record, 'date', '日期')) ?? timestamp?.slice(0, 10)
       const open = asText(pick(record, 'open', '开盘'))
       const high = asText(pick(record, 'high', '最高'))
       const low = asText(pick(record, 'low', '最低'))
       const close = asText(pick(record, 'close', '收盘'))
-      if (!date || !open || !high || !low || !close) return []
+      if (!rawDate || !open || !high || !low || !close) return []
+      const date = isoDate(rawDate)
       const minutes = INTRADAY_MINUTES.get(
         call.interval as '1m' | '5m' | '15m' | '30m' | '60m',
       )
@@ -426,7 +434,8 @@ export class AkshareProvider implements InstrumentProvider {
     const latest = records.at(-1)
     if (!latest) throw new ProviderError('NO_DATA', 'no recent quote data', false)
     const previous = records.at(-2)
-    const date = asText(pick(latest, 'date', '日期'))
+    const rawDate = asText(pick(latest, 'date', '日期'))
+    const date = rawDate ? isoDate(rawDate) : undefined
     return {
       source: result.source,
       marketTime: date ? `${date}T23:59:59+08:00` : null,

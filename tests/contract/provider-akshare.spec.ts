@@ -83,8 +83,8 @@ describe('AKShare provider contract', () => {
     const runner: AkshareRunner = async (request) => {
       requests.push(request)
       return { source: 'cffex', data: [
-        { symbol: 'IF2609', date: '2026-08-20', open: 3900, high: 3920, low: 3880, close: 3910, volume: 1200, turnover: 468000 },
-        { symbol: 'IF2609', date: '2026-08-21', open: 3910, high: 3940, low: 3900, close: 3930, volume: 1500, turnover: 589500 },
+        { symbol: 'IF2609', date: '20260820', open: 3900, high: 3920, low: 3880, close: 3910, volume: 1200, turnover: 468000 },
+        { symbol: 'IF2609', date: '20260821', open: 3910, high: 3940, low: 3900, close: 3930, volume: 1500, turnover: 589500 },
       ] }
     }
     const provider = new AkshareProvider({ runner })
@@ -96,6 +96,8 @@ describe('AKShare provider contract', () => {
     })).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
         source: 'cffex', tradingDate: '2026-08-21', close: '3930', currency: 'CNY',
+        periodStart: '2026-08-21T00:00:00+08:00',
+        periodEnd: '2026-08-21T23:59:59+08:00',
       }),
     ]))
     expect(requests[0]).toMatchObject({
@@ -107,6 +109,7 @@ describe('AKShare provider contract', () => {
       providerSymbol: 'CFFEX:IF2609', signal,
     })).resolves.toMatchObject({
       source: 'cffex', last: '3930', previousClose: '3910', volume: 1500,
+      marketTime: '2026-08-21T23:59:59+08:00',
     })
     await expect(provider.getBars!({
       providerSymbol: 'CFFEX:IF2609', signal, interval: '5m', adjustment: 'none',
