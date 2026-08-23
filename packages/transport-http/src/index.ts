@@ -622,42 +622,6 @@ export class EvaHttpService extends Service {
       }
     })
 
-    this.app.get<{
-      Querystring: { interval?: string; start?: string; end?: string; instrument_types?: string; limit?: string }
-    }>('/v1/data-sync/gaps', async (request, reply) => {
-      const interval = request.query.interval ?? '1d'
-      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
-      const start = request.query.start ?? today
-      const end = request.query.end ?? today
-      const instrumentTypes = (request.query.instrument_types ?? 'equity,index').split(',')
-      const limit = request.query.limit === undefined ? undefined : Number(request.query.limit)
-      if ((interval !== '1m' && interval !== '1d') ||
-        instrumentTypes.length === 0 || instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
-        (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20_000))) {
-        return reply.code(400).type('application/problem+json').send({
-          type: 'urn:eva:problem:invalid-data-sync-gap-query',
-          title: 'Invalid data sync gap query', status: 400,
-          code: 'INVALID_DATA_SYNC_GAP_QUERY', detail: 'interval, instrument_types, or limit is invalid.',
-          retryable: false, request_id: `req_${randomUUID()}`,
-        })
-      }
-      try {
-        return {
-          schema: 'eva.data-sync-gap-report.v1',
-          data: await this.dataSyncManager.detectGaps({
-            interval, start, end, instrumentTypes: instrumentTypes as InstrumentType[], limit,
-          }),
-        }
-      } catch {
-        return reply.code(400).type('application/problem+json').send({
-          type: 'urn:eva:problem:invalid-data-sync-gap-query',
-          title: 'Invalid data sync gap query', status: 400,
-          code: 'INVALID_DATA_SYNC_GAP_QUERY', detail: 'start and end must form a valid date range.',
-          retryable: false, request_id: `req_${randomUUID()}`,
-        })
-      }
-    })
-
     this.app.post<{
       Body: {
         instrument_types?: InstrumentType[]

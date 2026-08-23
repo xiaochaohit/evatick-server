@@ -128,7 +128,6 @@ describe('local historical data synchronization', () => {
           minute_records: 2,
           minute_first_trading_date: '2026-05-22',
           minute_last_trading_date: '2026-08-21',
-          minute_coverage_status: 'complete',
         }],
         meta: { local_only: true },
       })
@@ -141,11 +140,7 @@ describe('local historical data synchronization', () => {
         data: {
           interval: '1m', requested_start: '2026-05-22', requested_end: '2026-08-22',
           actual_start: '2026-05-22', actual_end: '2026-08-21', records: 2,
-          status: 'complete', sources: ['sina'],
-          daily: [
-            { trading_date: '2026-08-21', records: 1, missing_records: 239, status: 'partial' },
-            { trading_date: '2026-05-22', records: 1, missing_records: 239, status: 'partial' },
-          ],
+          sources: ['sina'], last_fetched_at: expect.any(String),
         },
         meta: { local_only: true },
       })
@@ -335,7 +330,8 @@ describe('local historical data synchronization', () => {
       expect(browserPage).not.toContain('数据源健康')
       expect(browserPage).toContain('1 分钟')
       expect(browserPage).toContain('LOCAL ONLY')
-      expect(browserPage).toContain('每日分钟完整性')
+      expect(browserPage).not.toContain('每日分钟完整性')
+      expect(browserPage).not.toContain('覆盖状态')
       expect(browserPage).toContain('id="bar-chart-canvas"')
       expect(browserPage).toContain('data-view="chart"')
       expect(browserPage).toContain('data-view="table"')
@@ -517,7 +513,7 @@ describe('local historical data synchronization', () => {
     }
   })
 
-  it('records independent runs, retries failed instruments, and reports data gaps', async () => {
+  it('records independent runs and retries failed instruments', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'eva-run-history-'))
     let allowSecond = false
     const requestedSymbols: string[] = []
@@ -611,13 +607,8 @@ describe('local historical data synchronization', () => {
         .then((response) => response.json()) as { data: unknown[] }
       expect(runsAfterClear.data).toEqual([])
 
-      const gaps = await fetch(
-        `${server.url}/v1/data-sync/gaps?interval=1d&start=2026-08-21&end=2026-08-21&instrument_types=equity`,
-      ).then((response) => response.json()) as {
-        data: { checked: number; complete: number; missing: number; items: { symbol: string; issue: string }[] }
-      }
-      expect(gaps.data).toMatchObject({ checked: 3, complete: 2, missing: 1 })
-      expect(gaps.data.items).toEqual([expect.objectContaining({ symbol: '600002', issue: 'no_data' })])
+      const removedGapEndpoint = await fetch(`${server.url}/v1/data-sync/gaps`)
+      expect(removedGapEndpoint.status).toBe(404)
       expect(requestedSymbols.filter((symbol) => symbol === 'sh600000')).toHaveLength(1)
       expect(requestedSymbols.at(-1)).toBe('sh600001')
     } finally {

@@ -86,28 +86,6 @@ export interface DataSyncRunItem {
   finished_at: string | null
 }
 
-export interface DataSyncGapReport {
-  interval: DataSyncInterval
-  start: string
-  end: string
-  instrument_types: readonly InstrumentType[]
-  checked: number
-  complete: number
-  missing: number
-  items: readonly {
-    instrument_id: string
-    instrument_type: InstrumentType
-    symbol: string
-    name: string
-    issue: 'no_data' | 'coverage_gap' | 'minute_incomplete'
-    actual_start: string | null
-    actual_end: string | null
-    missing_ranges: readonly { start: string; end: string }[]
-    incomplete_days: number
-    sample_incomplete_days: readonly { trading_date: string; records: number; missing_records: number }[]
-  }[]
-}
-
 export interface DataSyncStatus {
   database_path: string
   storage: {
@@ -173,7 +151,6 @@ export interface LocalInstrumentSummary {
   minute_latest_close: string | null
   minute_requested_start: string | null
   minute_requested_end: string | null
-  minute_coverage_status: 'complete' | 'partial' | 'none'
 }
 
 export interface LocalBarSummary {
@@ -197,16 +174,8 @@ export interface LocalCoverageSummary {
   actual_start: string | null
   actual_end: string | null
   records: number
-  status: 'complete' | 'partial' | 'none'
   sources: readonly string[]
   last_fetched_at: string | null
-  daily: readonly {
-    trading_date: string
-    records: number
-    expected_records: number
-    missing_records: number
-    status: 'complete' | 'partial'
-  }[]
 }
 
 interface DataSyncDependencies {
@@ -420,77 +389,6 @@ export class DataSyncManager {
     return (await this.readRun(source.run_id)) ?? retryRun
   }
 
-  async detectGaps(request: {
-    interval: DataSyncInterval
-    start: string
-    end: string
-    instrumentTypes: readonly InstrumentType[]
-    limit?: number
-  }): Promise<DataSyncGapReport> {
-    await this.ready
-    if (!DATE_PATTERN.test(request.start) || !DATE_PATTERN.test(request.end) || request.start > request.end) {
-      throw new Error('DATA_SYNC_INVALID_RANGE')
-    }
-    const catalog = (await this.dependencies.loadInstruments()).filter((instrument) =>
-      request.instrumentTypes.includes(instrument.type) && instrument.capabilities.includes('bars'))
-      .slice(0, request.limit)
-    const table = request.interval === '1m' ? 'minute_bars' : 'daily_bars'
-    const coverageTable = request.interval === '1m' ? 'minute_sync_coverage' : 'sync_coverage'
-    const reader = await this.db.runAndReadAll(`
-      SELECT instrument_id, min(trading_date)::VARCHAR AS actual_start,
-        max(trading_date)::VARCHAR AS actual_end
-      FROM ${table}
-      WHERE adjustment = 'none' AND trading_date BETWEEN $start::DATE AND $end::DATE
-      GROUP BY instrument_id
-    `, { start: request.start, end: request.end })
-    const ranges = new Map(reader.getRowObjectsJson().map((row) => [String(row.instrument_id), row]))
-    const coverageReader = await this.db.runAndReadAll(`
-      SELECT instrument_id, requested_start::VARCHAR AS requested_start,
-        requested_end::VARCHAR AS requested_end
-      FROM ${coverageTable} WHERE adjustment = 'none'
-    `)
-    const coverages = new Map(coverageReader.getRowObjectsJson().map((row) => [String(row.instrument_id), row]))
-    const minuteReader = request.interval === '1m' ? await this.db.runAndReadAll(`
-      SELECT instrument_id, trading_date::VARCHAR AS trading_date, count(*)::INTEGER AS records
-      FROM minute_bars
-      WHERE adjustment = 'none' AND trading_date BETWEEN $start::DATE AND $end::DATE
-      GROUP BY instrument_id, trading_date HAVING count(*) < 240
-      ORDER BY trading_date DESC
-    `, { start: request.start, end: request.end }) : null
-    const incomplete = new Map<string, { trading_date: string; records: number; missing_records: number }[]>()
-    for (const row of minuteReader?.getRowObjectsJson() ?? []) {
-      const id = String(row.instrument_id)
-      const days = incomplete.get(id) ?? []
-      days.push({ trading_date: String(row.trading_date), records: Number(row.records), missing_records: 240 - Number(row.records) })
-      incomplete.set(id, days)
-    }
-    const items: DataSyncGapReport['items'][number][] = []
-    for (const instrument of catalog) {
-      const range = ranges.get(instrument.instrumentId)
-      const actualStart = typeof range?.actual_start === 'string' ? range.actual_start : null
-      const actualEnd = typeof range?.actual_end === 'string' ? range.actual_end : null
-      const coverage = coverages.get(instrument.instrumentId)
-      const coveredStart = typeof coverage?.requested_start === 'string' ? coverage.requested_start : null
-      const coveredEnd = typeof coverage?.requested_end === 'string' ? coverage.requested_end : null
-      const missingRanges: { start: string; end: string }[] = []
-      if (coveredStart && coveredStart > request.start) missingRanges.push({ start: request.start, end: subtractDays(coveredStart, 1) })
-      if (coveredEnd && coveredEnd < request.end) missingRanges.push({ start: addDays(coveredEnd, 1), end: request.end })
-      const days = incomplete.get(instrument.instrumentId) ?? []
-      const issue = !coveredStart || !coveredEnd ? 'no_data' : missingRanges.length ? 'coverage_gap' : days.length ? 'minute_incomplete' : null
-      if (issue) items.push({
-        instrument_id: instrument.instrumentId, instrument_type: instrument.type,
-        symbol: instrument.symbol, name: instrument.name, issue,
-        actual_start: actualStart, actual_end: actualEnd, missing_ranges: missingRanges,
-        incomplete_days: days.length, sample_incomplete_days: days.slice(0, 5),
-      })
-    }
-    return {
-      interval: request.interval, start: request.start, end: request.end,
-      instrument_types: [...request.instrumentTypes], checked: catalog.length,
-      complete: catalog.length - items.length, missing: items.length, items,
-    }
-  }
-
   private async databaseBytes(): Promise<number | null> {
     if (this.dependencies.databasePath === ':memory:') return null
     const sizes = await Promise.all([
@@ -625,13 +523,6 @@ export class DataSyncManager {
         const minuteLast = row.minute_last_date === null ? null : String(row.minute_last_date)
         const requestedStart = row.requested_start === null ? null : String(row.requested_start)
         const requestedEnd = row.requested_end === null ? null : String(row.requested_end)
-        const minuteCoverageStatus = minuteRecords === 0
-          ? 'none' as const
-          : requestedStart && requestedEnd && minuteFirst && minuteLast &&
-              minuteFirst <= addDays(requestedStart, 10) &&
-              minuteLast >= subtractDays(requestedEnd, 10)
-            ? 'complete' as const
-            : 'partial' as const
         const dailyRecords = Number(row.daily_records)
         const useMinute = request.interval === '1m' || (dailyRecords === 0 && minuteRecords > 0)
         const firstTradingDate = useMinute
@@ -664,7 +555,6 @@ export class DataSyncManager {
           minute_latest_close: row.minute_latest_close === null ? null : String(row.minute_latest_close),
           minute_requested_start: requestedStart,
           minute_requested_end: requestedEnd,
-          minute_coverage_status: minuteCoverageStatus,
         }
       }),
     }
@@ -789,34 +679,6 @@ export class DataSyncManager {
       ? null
       : String(row.actual_end)
     const records = Number(row.records ?? 0)
-    const status = records === 0
-      ? 'none' as const
-      : requestedStart && requestedEnd && actualStart && actualEnd &&
-          actualStart <= addDays(requestedStart, 10) &&
-          actualEnd >= subtractDays(requestedEnd, 10)
-        ? 'complete' as const
-        : 'partial' as const
-    let daily: LocalCoverageSummary['daily'] = []
-    if (interval === '1m') {
-      const dailyReader = await this.db.runAndReadAll(`
-        SELECT trading_date::VARCHAR AS trading_date, count(*)::INTEGER AS records
-        FROM minute_bars
-        WHERE instrument_id = $instrument_id AND adjustment = 'none'
-        GROUP BY trading_date
-        ORDER BY trading_date DESC
-        LIMIT 120
-      `, { instrument_id: instrumentId })
-      daily = dailyReader.getRowObjectsJson().map((item) => {
-        const count = Number(item.records)
-        return {
-          trading_date: String(item.trading_date),
-          records: count,
-          expected_records: 240,
-          missing_records: Math.max(240 - count, 0),
-          status: count >= 240 ? 'complete' as const : 'partial' as const,
-        }
-      })
-    }
     return {
       interval,
       requested_start: requestedStart,
@@ -824,14 +686,12 @@ export class DataSyncManager {
       actual_start: actualStart,
       actual_end: actualEnd,
       records,
-      status,
       sources: typeof row.sources === 'string' && row.sources
         ? row.sources.split(',').sort()
         : [],
       last_fetched_at: row.last_fetched_at === null || row.last_fetched_at === undefined
         ? null
         : String(row.last_fetched_at).replace(' ', 'T') + 'Z',
-      daily,
     }
   }
 
