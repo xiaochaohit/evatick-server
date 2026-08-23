@@ -15,7 +15,7 @@ English · [简体中文](README.md)
 
 EVA Tick Server (`evatickd`) turns fragmented, provider-specific market data into normalized, readable, versioned JSON designed for large language models and tool-using agents. It maintains a canonical instrument catalog, performs search and resolution, routes requests with timeouts and fallback, and serves the EVA CLI and other automated clients through HTTP.
 
-The current release targets mainland China: A-shares plus Shanghai, Shenzhen, and CSI indices. AKShare is the first data provider, but it does not define the product boundary.
+The current release covers mainland China A-shares; Shanghai, Shenzhen, and CSI indices; all six mainland China futures exchanges; and exchange-scoped Binance and Coinbase cryptocurrency markets. AKShare is the first data provider, but it does not define the product boundary.
 
 <!-- Media slot: add a demo GIF/WebP at docs/assets/evatick-demo.webp, then uncomment the next line. -->
 <!-- ![EVA Tick Server demo](docs/assets/evatick-demo.webp) -->
@@ -43,6 +43,7 @@ Traditional financial APIs often expose provider-specific functions, identifiers
 | --- | --- | :---: | :---: | :---: |
 | Equities | Mainland China A-shares | ✓ | Intraday, daily | — |
 | Indices | Shanghai, Shenzhen, and CSI indices | ✓ | Intraday, daily | ✓ |
+| Futures | CFFEX, SHFE, INE, CZCE, DCE, and GFEX | ✓ | Contract daily bars; unadjusted main continuous series | — |
 | Cryptocurrencies | Binance and Coinbase Exchange | ✓ | Minute through monthly, depending on venue | — |
 
 Cryptocurrency instruments are exchange-scoped, for example
@@ -54,6 +55,7 @@ The server also provides:
 - Instrument listing, details, search, and context-aware resolution
 - Multi-source health checks, request timeouts, retries, and fallback
 - Background daily and one-minute bar synchronization, resume support, and daily schedules
+- Traceable unadjusted main continuous futures series, built per product from each day's listed contract with the greatest open interest (or volume when open interest is unavailable)
 - API-key authentication and RFC 9457-style `application/problem+json` errors
 - Admin login, key management, local data browsing, sync controls, and provider status
 
@@ -227,7 +229,7 @@ See [`deploy/evatickd.config.example.json`](deploy/evatickd.config.example.json)
 The admin console is available by default at [http://127.0.0.1:8765/admin](http://127.0.0.1:8765/admin). It provides:
 
 - Local data browsing and coverage inspection
-- Manual historical-data sync, cancellation, resume, and daily schedules
+- Manual historical-data sync, cancellation, resume, and daily schedules; futures synchronize as unadjusted main continuous series by product
 - Provider health and scheduled checks
 - API-key creation, reveal, copy, and revocation
 - Administrator password and session management
