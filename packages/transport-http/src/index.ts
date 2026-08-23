@@ -1234,36 +1234,6 @@ export class EvaHttpService extends Service {
           request_id: `req_${randomUUID()}`,
         })
       }
-      const localQuote = await this.dataSyncManager.readQuote(instrument.instrumentId)
-      if (localQuote) {
-        const observedAt = new Date().toISOString()
-        return {
-          schema: 'eva.quote.v1',
-          data: {
-            instrument_id: instrument.instrumentId,
-            symbol: instrument.symbol,
-            name: instrument.name,
-            venue: instrument.venue ?? null,
-            publisher: instrument.publisher ?? null,
-            currency: localQuote.currency,
-            market_time: localQuote.marketTime,
-            observed_at: observedAt,
-            market_status: 'closed',
-            last: localQuote.last,
-            open: localQuote.open,
-            high: localQuote.high,
-            low: localQuote.low,
-            previous_close: localQuote.previousClose,
-            volume: localQuote.volume,
-            turnover: localQuote.turnover,
-          },
-          meta: meta([{
-            provider: 'local-duckdb',
-            upstream: 'local',
-            fetched_at: observedAt,
-          }]),
-        }
-      }
       try {
         const result = await quoteFlights.run(instrument.instrumentId, async () =>
           routeInstrumentData({
@@ -1306,6 +1276,38 @@ export class EvaHttpService extends Service {
         }
       } catch (error) {
         if (error instanceof ProviderRoutingError) {
+          const localQuote = await this.dataSyncManager.readQuote(instrument)
+          if (localQuote) {
+            return {
+              schema: 'eva.quote.v1',
+              data: {
+                instrument_id: instrument.instrumentId,
+                symbol: instrument.symbol,
+                name: instrument.name,
+                venue: instrument.venue ?? null,
+                publisher: instrument.publisher ?? null,
+                currency: localQuote.currency,
+                market_time: localQuote.marketTime,
+                observed_at: localQuote.observedAt,
+                market_status: 'unknown',
+                last: localQuote.last,
+                open: localQuote.open,
+                high: localQuote.high,
+                low: localQuote.low,
+                previous_close: localQuote.previousClose,
+                volume: localQuote.volume,
+                turnover: localQuote.turnover,
+              },
+              meta: meta([{
+                provider: 'local-duckdb',
+                upstream: 'local',
+                fetched_at: localQuote.observedAt,
+                stale: true,
+              }], true, [
+                `live quote unavailable (${error.code}); using the latest synchronized daily close`,
+              ]),
+            }
+          }
           return sendRoutingProblem(reply, error)
         }
         throw error
@@ -1387,7 +1389,7 @@ export class EvaHttpService extends Service {
       let loadedFactors: Awaited<ReturnType<typeof loadAdjustmentFactors>> = null
       if (interval === '1d' || interval === '1m') {
         let localBars = await this.dataSyncManager.readBars({
-          instrumentId: instrument.instrumentId,
+          instrument,
           interval,
           adjustment,
           start: request.query.start,
@@ -1399,7 +1401,7 @@ export class EvaHttpService extends Service {
           if (loadedFactors) {
             await this.dataSyncManager.storeAdjustmentFactors(instrument, loadedFactors)
             localBars = await this.dataSyncManager.readBars({
-              instrumentId: instrument.instrumentId,
+              instrument,
               interval,
               adjustment,
               start: request.query.start,

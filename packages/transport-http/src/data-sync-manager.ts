@@ -125,6 +125,7 @@ export interface DataSyncSchedule {
 
 export interface LocalQuote {
   marketTime: string
+  observedAt: string
   currency: string
   last: string
   open: string
@@ -958,7 +959,7 @@ export class DataSyncManager {
   }
 
   async readBars(request: {
-    instrumentId: string
+    instrument: Pick<CatalogInstrument, 'instrumentId' | 'type' | 'currency'>
     interval?: DataSyncInterval
     adjustment: PriceAdjustment
     start?: string
@@ -966,15 +967,16 @@ export class DataSyncManager {
     asOf?: string
   }): Promise<readonly ProviderBar[] | null> {
     await this.ready
+    const instrumentId = request.instrument.instrumentId
     const interval = request.interval ?? '1d'
-    const coverage = await this.coverage(request.instrumentId, 'none', interval)
+    const coverage = await this.coverage(instrumentId, 'none', interval)
     if (!coverage) return null
     if (request.start && request.start < coverage.start) return null
     if (request.end && request.end > coverage.end) return null
     let bars: readonly ProviderBar[]
     if (interval === '1m') {
       const storedRange = await this.storedRange(
-        request.instrumentId,
+        instrumentId,
         'none',
         interval,
       )
@@ -996,7 +998,7 @@ export class DataSyncManager {
           AND ($end = '' OR trading_date <= $end::DATE)
         ORDER BY period_start
       `, {
-        instrument_id: request.instrumentId,
+        instrument_id: instrumentId,
         start: request.start ?? '',
         end: request.end ?? '',
       })
@@ -1006,7 +1008,7 @@ export class DataSyncManager {
         tradingDate: String(row.trading_date),
         periodStart: String(row.period_start),
         periodEnd: String(row.period_end),
-        currency: 'CNY',
+        currency: request.instrument.currency,
         open: String(row.open),
         high: String(row.high),
         low: String(row.low),
@@ -1028,19 +1030,24 @@ export class DataSyncManager {
           AND ($end = '' OR trading_date <= $end::DATE)
         ORDER BY trading_date
       `, {
-        instrument_id: request.instrumentId,
+        instrument_id: instrumentId,
         start: request.start ?? '',
         end: request.end ?? '',
       })
       bars = reader.getRowObjectsJson().map((row): ProviderBar => {
         const tradingDate = String(row.trading_date)
+        const crypto = request.instrument.type === 'crypto'
         return {
           source: 'local-duckdb',
           interval: '1d',
           tradingDate,
-          periodStart: `${tradingDate}T00:00:00+08:00`,
-          periodEnd: `${tradingDate}T23:59:59+08:00`,
-          currency: 'CNY',
+          periodStart: crypto
+            ? `${tradingDate}T00:00:00.000Z`
+            : `${tradingDate}T00:00:00+08:00`,
+          periodEnd: crypto
+            ? `${addDays(tradingDate, 1)}T00:00:00.000Z`
+            : `${tradingDate}T23:59:59+08:00`,
+          currency: request.instrument.currency,
           open: String(row.open),
           high: String(row.high),
           low: String(row.low),
@@ -1052,7 +1059,7 @@ export class DataSyncManager {
         }
       })
     }
-    return this.adjustBars(request.instrumentId, bars, request.adjustment, request.asOf)
+    return this.adjustBars(instrumentId, bars, request.adjustment, request.asOf)
   }
 
   async adjustBars(
@@ -1113,24 +1120,31 @@ export class DataSyncManager {
     return typeof coveredAsOf === 'string' && coveredAsOf >= anchorDate
   }
 
-  async readQuote(instrumentId: string): Promise<LocalQuote | null> {
+  async readQuote(
+    instrument: Pick<CatalogInstrument, 'instrumentId' | 'type' | 'currency'>,
+  ): Promise<LocalQuote | null> {
     await this.ready
     const reader = await this.db.runAndReadAll(`
       SELECT
         trading_date::VARCHAR AS trading_date,
-        open, high, low, close, volume, turnover
+        open, high, low, close, volume, turnover,
+        fetched_at::VARCHAR AS fetched_at
       FROM daily_bars
       WHERE instrument_id = $instrument_id AND adjustment = 'none'
       ORDER BY trading_date DESC
       LIMIT 2
-    `, { instrument_id: instrumentId })
+    `, { instrument_id: instrument.instrumentId })
     const rows = reader.getRowObjectsJson()
     const latest = rows[0]
     if (!latest) return null
     const tradingDate = String(latest.trading_date)
+    const fetchedAt = String(latest.fetched_at).replace(' ', 'T')
     return {
-      marketTime: `${tradingDate}T15:00:00+08:00`,
-      currency: 'CNY',
+      marketTime: instrument.type === 'crypto'
+        ? `${addDays(tradingDate, 1)}T00:00:00.000Z`
+        : `${tradingDate}T15:00:00+08:00`,
+      observedAt: fetchedAt.endsWith('Z') ? fetchedAt : `${fetchedAt}Z`,
+      currency: instrument.currency,
       last: String(latest.close),
       open: String(latest.open),
       high: String(latest.high),
