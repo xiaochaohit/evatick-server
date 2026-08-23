@@ -81,7 +81,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [equity, index, future]
+            enum: [equity, index, future, crypto]
       requestBody:
         required: true
         content:
@@ -569,10 +569,11 @@ components:
       in: query
       schema:
         type: string
-        enum: [equity, index, future]
+        enum: [equity, index, future, crypto]
     Venue:
       name: venue
       in: query
+      description: Trading venue. Use BINANCE or COINBASE to keep cryptocurrency results exchange-scoped.
       schema:
         type: string
     Publisher:
@@ -646,7 +647,7 @@ components:
           type: string
         category:
           type: string
-          enum: [equity, index, future]
+          enum: [equity, index, future, crypto]
         status:
           type: string
           enum: [unknown, checking, healthy, unhealthy]
@@ -697,7 +698,7 @@ components:
       properties:
         category:
           type: string
-          enum: [equity, index, future]
+          enum: [equity, index, future, crypto]
         source_ids:
           type: array
           uniqueItems: true
@@ -734,7 +735,7 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: [equity, index, future]
+            enum: [equity, index, future, crypto]
         interval:
           type: string
           enum: [1m, 1d]
@@ -868,7 +869,7 @@ components:
           minItems: 1
           items:
             type: string
-            enum: [equity, index, future]
+            enum: [equity, index, future, crypto]
         lookback_days:
           type: integer
           minimum: 1
@@ -970,15 +971,17 @@ components:
           type: string
         instrument_type:
           type: string
-          enum: [equity, index, future]
+          enum: [equity, index, future, crypto]
         market:
-          const: CN
+          type: string
+          enum: [CN, GLOBAL]
         name:
           type: string
         symbol:
           type: string
         venue:
           type: [string, 'null']
+          description: Exchange identity for cryptocurrency instruments; BINANCE and COINBASE instruments are distinct.
         publisher:
           type: [string, 'null']
         currency:
@@ -1130,9 +1133,10 @@ components:
       properties:
         instrument_type:
           type: string
-          enum: [equity, index, future]
+          enum: [equity, index, future, crypto]
         venue:
           type: string
+          description: Required for deterministic cryptocurrency resolution when the same pair trades on multiple exchanges.
         publisher:
           type: string
         capability:

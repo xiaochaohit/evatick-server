@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { AkshareProvider } from '@evatick/provider-akshare'
+import { BinanceProvider, CoinbaseProvider } from '@evatick/provider-crypto'
 
 import {
   assertPythonExecutable,
@@ -36,6 +37,8 @@ export async function startEvaTickDaemon(configurationPath: string) {
   await server.mountProvider(new AkshareProvider({
     pythonExecutable: configuration.providers.akshare.pythonExecutable,
   }))
+  await server.mountProvider(new BinanceProvider())
+  await server.mountProvider(new CoinbaseProvider())
   return server
 }
 

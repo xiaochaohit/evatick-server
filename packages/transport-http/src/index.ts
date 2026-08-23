@@ -25,6 +25,7 @@ import type {
 import { AdminAuth } from './admin-auth.js'
 import { ApiKeyAuth } from './api-key-auth.js'
 import { apiKeyDashboardHtml } from './api-key-dashboard.js'
+import { BoundedExecutor, SingleFlight } from './concurrency.js'
 import { dataBrowserDashboardHtml } from './data-browser-dashboard.js'
 import { dataSourceDashboardHtml } from './data-source-dashboard.js'
 import { DataSourcePreferences } from './data-source-preferences.js'
@@ -70,6 +71,10 @@ function toInstrumentRecord(instrument: CatalogInstrument): InstrumentRecord {
   }
 }
 
+function isInstrumentType(value: unknown): value is InstrumentType {
+  return value === 'equity' || value === 'index' || value === 'future' || value === 'crypto'
+}
+
 export class EvaHttpService extends Service {
   static inject = ['marketProviderRegistry', 'marketCatalogStore']
 
@@ -86,6 +91,7 @@ export class EvaHttpService extends Service {
     private readonly config: {
       retryAttempts?: number
       requestTimeoutMs?: number
+      providerConcurrency?: number
       healthCheckIntervalMs?: number
       healthCheckTimeoutMs?: number
       historyPath?: string
@@ -149,6 +155,14 @@ export class EvaHttpService extends Service {
       retryAttempts: Math.max(this.config.retryAttempts ?? 2, 1),
       timeoutMs: Math.max(this.config.requestTimeoutMs ?? 10_000, 1),
     }
+    const providerCalls = new BoundedExecutor(
+      Math.max(this.config.providerConcurrency ?? 4, 1),
+    )
+    const catalogFlights = new SingleFlight()
+    const barFlights = new SingleFlight()
+    const adjustmentFactorFlights = new SingleFlight()
+    const quoteFlights = new SingleFlight()
+    const constituentFlights = new SingleFlight()
     this.healthMonitor = new ProviderHealthMonitor(
       () => ctx.marketProviderRegistry.list(),
       Math.max(this.config.healthCheckIntervalMs ?? 3_600_000, 0),
@@ -162,14 +176,44 @@ export class EvaHttpService extends Service {
     const providersFor = (instrument: Pick<CatalogInstrument, 'type'>) =>
       this.dataSourcePreferences.orderProviders(instrument.type)
 
-    const loadCatalog = async () => {
+    const loadProviderBars = (
+      instrument: CatalogInstrument,
+      request: {
+        interval: BarInterval
+        start?: string
+        end?: string
+      },
+    ) => barFlights.run(JSON.stringify([
+      instrument.instrumentId,
+      request.interval,
+      request.start ?? null,
+      request.end ?? null,
+    ]), async () => routeInstrumentData({
+      providers: await providersFor(instrument),
+      instrument,
+      capability: 'bars',
+      ...routingOptions,
+      supports: (provider) => typeof provider.getBars === 'function',
+      invoke: (provider, providerSymbol, signal) => providerCalls.run(async () =>
+        provider.getBars!({
+          providerSymbol,
+          signal,
+          interval: request.interval,
+          start: request.start,
+          end: request.end,
+          adjustment: 'none',
+        })),
+    }))
+
+    const loadCatalogOnce = async () => {
       const providers = ctx.marketProviderRegistry.list()
       const results = await Promise.all(
         providers.map(async (provider) => {
           try {
             const result = await retryProviderCall({
               ...routingOptions,
-              invoke: (signal) => provider.listInstruments(signal),
+              invoke: (signal) => providerCalls.run(() =>
+                provider.listInstruments(signal)),
             })
             const fetchedAt = new Date().toISOString()
             await ctx.marketCatalogStore.writeProvider({
@@ -231,6 +275,7 @@ export class EvaHttpService extends Service {
         ],
       }
     }
+    const loadCatalog = () => catalogFlights.run('catalog', loadCatalogOnce)
 
     const meta = (
       sources: readonly {
@@ -271,44 +316,32 @@ export class EvaHttpService extends Service {
           typeof provider.getAdjustmentFactors === 'function')) {
         return null
       }
-      const result = await routeInstrumentData({
-        providers: await providersFor(instrument),
-        instrument,
-        capability: 'bars',
-        ...routingOptions,
-        supports: (provider) => typeof provider.getAdjustmentFactors === 'function',
-        invoke: (provider, providerSymbol, signal) =>
-          provider.getAdjustmentFactors?.({ providerSymbol, signal }),
+      return adjustmentFactorFlights.run(instrument.instrumentId, async () => {
+        const result = await routeInstrumentData({
+          providers: await providersFor(instrument),
+          instrument,
+          capability: 'bars',
+          ...routingOptions,
+          supports: (provider) => typeof provider.getAdjustmentFactors === 'function',
+          invoke: (provider, providerSymbol, signal) => providerCalls.run(async () =>
+            provider.getAdjustmentFactors!({ providerSymbol, signal })),
+        })
+        return {
+          provider: result.provider,
+          upstream: result.value[0]?.source,
+          factors: result.value,
+          asOfDate: new Date().toLocaleDateString('sv-SE', {
+            timeZone: 'Asia/Shanghai',
+          }),
+        }
       })
-      return {
-        provider: result.provider,
-        upstream: result.value[0]?.source,
-        factors: result.value,
-        asOfDate: new Date().toLocaleDateString('sv-SE', {
-          timeZone: 'Asia/Shanghai',
-        }),
-      }
     }
 
     this.dataSyncManager = new DataSyncManager({
       databasePath: this.config.historyPath ?? ':memory:',
       loadInstruments: async () => (await loadCatalog()).instruments,
       loadBars: async (instrument, request) => {
-        const result = await routeInstrumentData({
-          providers: await providersFor(instrument),
-          instrument,
-          capability: 'bars',
-          ...routingOptions,
-          supports: (provider) => typeof provider.getBars === 'function',
-          invoke: (provider, providerSymbol, signal) => provider.getBars?.({
-            providerSymbol,
-            signal,
-            interval: request.interval,
-            start: request.start,
-            end: request.end,
-            adjustment: request.adjustment,
-          }),
-        })
+        const result = await loadProviderBars(instrument, request)
         return {
           provider: result.provider,
           upstream: result.value[0]?.source,
@@ -437,7 +470,7 @@ export class EvaHttpService extends Service {
       if (
         !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         !Number.isInteger(offset) || offset < 0 ||
-        (instrumentType !== undefined && instrumentType !== 'equity' && instrumentType !== 'index' && instrumentType !== 'future') ||
+        (instrumentType !== undefined && !isInstrumentType(instrumentType)) ||
         (interval !== undefined && interval !== '1m' && interval !== '1d') ||
         (request.query.q?.length ?? 0) > 100
       ) {
@@ -555,7 +588,7 @@ export class EvaHttpService extends Service {
       const limit = Number(request.query.limit ?? 50)
       const offset = Number(request.query.offset ?? 0)
       if (
-        (instrumentType !== 'equity' && instrumentType !== 'index' && instrumentType !== 'future') ||
+        !isInstrumentType(instrumentType) ||
         (request.query.q?.length ?? 0) > 100 ||
         !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         !Number.isInteger(offset) || offset < 0
@@ -679,7 +712,7 @@ export class EvaHttpService extends Service {
       if (
         !Array.isArray(instrumentTypes) ||
         instrumentTypes.length === 0 ||
-        instrumentTypes.some((value) => value !== 'equity' && value !== 'index' && value !== 'future') ||
+        instrumentTypes.some((value) => !isInstrumentType(value)) ||
         (instrumentIds !== undefined && (
           !Array.isArray(instrumentIds) || instrumentIds.length === 0 || instrumentIds.length > 20_000 ||
           instrumentIds.some((value) => typeof value !== 'string' || value.length === 0 || value.length > 200) ||
@@ -797,7 +830,7 @@ export class EvaHttpService extends Service {
         (interval !== '1m' && interval !== '1d') ||
         typeof skipWeekends !== 'boolean' ||
         !Array.isArray(instrumentTypes) || instrumentTypes.length === 0 ||
-        instrumentTypes.some((type) => type !== 'equity' && type !== 'index' && type !== 'future') ||
+        instrumentTypes.some((type) => !isInstrumentType(type)) ||
         (instrumentIds !== undefined && (
           !Array.isArray(instrumentIds) || instrumentIds.length === 0 || instrumentIds.length > 20_000 ||
           instrumentIds.some((value) => typeof value !== 'string' || value.length === 0 || value.length > 200) ||
@@ -1185,15 +1218,16 @@ export class EvaHttpService extends Service {
         }
       }
       try {
-        const result = await routeInstrumentData({
-          providers: await providersFor(instrument),
-          instrument,
-          capability: 'quote',
-          ...routingOptions,
-          supports: (provider) => typeof provider.getQuote === 'function',
-          invoke: (provider, providerSymbol, signal) =>
-            provider.getQuote?.({ providerSymbol, signal }),
-        })
+        const result = await quoteFlights.run(instrument.instrumentId, async () =>
+          routeInstrumentData({
+            providers: await providersFor(instrument),
+            instrument,
+            capability: 'quote',
+            ...routingOptions,
+            supports: (provider) => typeof provider.getQuote === 'function',
+            invoke: (provider, providerSymbol, signal) => providerCalls.run(async () =>
+              provider.getQuote!({ providerSymbol, signal })),
+          }))
         const quote = result.value
         return {
           schema: 'eva.quote.v1',
@@ -1285,6 +1319,15 @@ export class EvaHttpService extends Service {
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }
+      if (instrument.type === 'crypto' && adjustment !== 'none') {
+        return reply.code(422).type('application/problem+json').send({
+          type: 'urn:eva:problem:adjustment-unavailable-for-crypto',
+          title: 'Price adjustment unavailable for cryptocurrency', status: 422,
+          code: 'ADJUSTMENT_UNAVAILABLE_FOR_CRYPTO',
+          detail: 'Cryptocurrency bars are exchange-native and unadjusted; request adjustment=none.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
       if (instrument.type !== 'equity' && adjustment !== 'none') {
         return reply.code(422).type('application/problem+json').send({
           type: 'urn:eva:problem:adjustment-unavailable-for-index',
@@ -1373,21 +1416,10 @@ export class EvaHttpService extends Service {
           }
           await this.dataSyncManager.storeAdjustmentFactors(instrument, loadedFactors)
         }
-        const result = await routeInstrumentData({
-          providers: await providersFor(instrument),
-          instrument,
-          capability: 'bars',
-          ...routingOptions,
-          supports: (provider) => typeof provider.getBars === 'function',
-          invoke: (provider, providerSymbol, signal) =>
-            provider.getBars?.({
-              providerSymbol,
-              signal,
-              interval,
-              start: request.query.start,
-              end: request.query.end,
-              adjustment: 'none',
-            }),
+        const result = await loadProviderBars(instrument, {
+          interval,
+          start: request.query.start,
+          end: request.query.end,
         })
         const cacheWarnings: string[] = []
         if (interval === '1d' || interval === '1m') {
@@ -1488,20 +1520,23 @@ export class EvaHttpService extends Service {
           })
         }
         try {
-          const result = await routeInstrumentData({
+          const result = await constituentFlights.run(JSON.stringify([
+            instrument.instrumentId,
+            request.query.as_of ?? null,
+          ]), async () => routeInstrumentData({
             providers: await providersFor(instrument),
             instrument,
             capability: 'constituents',
             ...routingOptions,
             supports: (provider) =>
               typeof provider.getConstituents === 'function',
-            invoke: (provider, providerSymbol, signal) =>
-              provider.getConstituents?.({
+            invoke: (provider, providerSymbol, signal) => providerCalls.run(async () =>
+              provider.getConstituents!({
                 providerSymbol,
                 signal,
                 asOf: request.query.as_of,
-              }),
-          })
+              })),
+          }))
           const rows = result.value.map((membership) => {
             const constituent = catalog.instruments.find((candidate) =>
               candidate.identifiers.some(
@@ -1530,9 +1565,14 @@ export class EvaHttpService extends Service {
               rank: membership.rank,
             }
           })
+          const uniqueRows = [...new Map(rows
+            .sort((left, right) =>
+              (left.rank ?? Number.MAX_SAFE_INTEGER) -
+                (right.rank ?? Number.MAX_SAFE_INTEGER))
+            .map((row) => [row.constituent_id, row])).values()]
           return {
             schema: 'eva.index-constituent-list.v1',
-            data: rows.sort(
+            data: uniqueRows.sort(
               (left, right) =>
                 (left.rank ?? Number.MAX_SAFE_INTEGER) -
                   (right.rank ?? Number.MAX_SAFE_INTEGER) ||

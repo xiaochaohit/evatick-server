@@ -3,6 +3,8 @@ import { stat } from 'node:fs/promises'
 
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 
+import { BoundedExecutor } from './concurrency.js'
+
 import type {
   BarInterval,
   CatalogInstrument,
@@ -274,6 +276,7 @@ export class DataSyncManager {
   private readonly scheduleTimers = new Map<number, ReturnType<typeof setTimeout>>()
   private readonly schedules = new Map<number, DataSyncSchedule>()
   private pendingScheduleIds: number[] = []
+  private readonly writes = new BoundedExecutor(1)
 
   constructor(private readonly dependencies: DataSyncDependencies) {
     this.ready = this.initialize()
@@ -1147,34 +1150,38 @@ export class DataSyncManager {
       adjustment: PriceAdjustment
     },
   ): Promise<void> {
-    await this.ready
-    if (request.adjustment !== 'none') {
-      throw new Error('ONLY_RAW_BARS_CAN_BE_STORED')
-    }
-    const interval = request.interval ?? '1d'
-    await this.upsertInstrument(instrument)
-    await this.upsertBars(instrument, result, request.adjustment, interval)
-    if (request.start && request.end) {
-      await this.updateCoverage(
-        instrument.instrumentId,
-        request.adjustment,
-        interval,
-        request.start,
-        request.end,
-      )
-    }
+    await this.writes.run(async () => {
+      await this.ready
+      if (request.adjustment !== 'none') {
+        throw new Error('ONLY_RAW_BARS_CAN_BE_STORED')
+      }
+      const interval = request.interval ?? '1d'
+      await this.upsertInstrument(instrument)
+      await this.upsertBars(instrument, result, request.adjustment, interval)
+      if (request.start && request.end) {
+        await this.updateCoverage(
+          instrument.instrumentId,
+          request.adjustment,
+          interval,
+          request.start,
+          request.end,
+        )
+      }
+    })
   }
 
   async storeAdjustmentFactors(
     instrument: CatalogInstrument,
     result: SyncedAdjustmentFactors,
   ): Promise<void> {
-    await this.ready
-    if (instrument.type !== 'equity') {
-      throw new Error('ADJUSTMENT_FACTORS_REQUIRE_EQUITY')
-    }
-    await this.upsertInstrument(instrument)
-    await this.upsertAdjustmentFactors(instrument.instrumentId, result)
+    await this.writes.run(async () => {
+      await this.ready
+      if (instrument.type !== 'equity') {
+        throw new Error('ADJUSTMENT_FACTORS_REQUIRE_EQUITY')
+      }
+      await this.upsertInstrument(instrument)
+      await this.upsertAdjustmentFactors(instrument.instrumentId, result)
+    })
   }
 
   async localDataSources() {
@@ -1196,7 +1203,7 @@ export class DataSyncManager {
       { records: Number(row.records), hasMinute: Number(row.has_minute) === 1 },
     ] as const))
     const checkedAt = new Date().toISOString()
-    return (['equity', 'index', 'future'] as const).map((category) => ({
+    return (['equity', 'index', 'future', 'crypto'] as const).map((category) => ({
       provider_id: 'local-duckdb',
       source_id: 'local',
       source_name: '本地 DuckDB',
@@ -1505,7 +1512,6 @@ export class DataSyncManager {
         status: 'running', startedAt: new Date().toISOString(),
       })
       try {
-        await this.upsertInstrument(instrument)
         const [storedRange, coveredStart] = await Promise.all([
           this.storedRange(instrument.instrumentId, run.adjustment, run.interval),
           this.coveredStart(instrument.instrumentId, run.adjustment, run.interval),
@@ -1524,17 +1530,20 @@ export class DataSyncManager {
             ? this.dependencies.loadAdjustmentFactors(instrument)
             : null,
         ])
-        await this.upsertBars(instrument, result, run.adjustment, run.interval)
-        if (adjustmentFactors) {
-          await this.upsertAdjustmentFactors(instrument.instrumentId, adjustmentFactors)
-        }
-        await this.updateCoverage(
-          instrument.instrumentId,
-          run.adjustment,
-          run.interval,
-          run.start,
-          run.end,
-        )
+        await this.writes.run(async () => {
+          await this.upsertInstrument(instrument)
+          await this.upsertBars(instrument, result, run.adjustment, run.interval)
+          if (adjustmentFactors) {
+            await this.upsertAdjustmentFactors(instrument.instrumentId, adjustmentFactors)
+          }
+          await this.updateCoverage(
+            instrument.instrumentId,
+            run.adjustment,
+            run.interval,
+            run.start,
+            run.end,
+          )
+        })
         run.succeeded += 1
         run.bars_written += result.bars.length
         await this.updateRunItem(run.run_id, instrument.instrumentId, {
