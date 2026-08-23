@@ -17,8 +17,10 @@
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "12.1.0",
+    "@evatick/core": "workspace:*",
     "@evatick/server": "workspace:*",
     "@evatick/provider-akshare": "workspace:*",
+    "@evatick/provider-crypto": "workspace:*",
     "@types/node": "24.10.1",
     "tsx": "4.22.4",
     "typescript": "6.0.3",

@@ -11,6 +11,7 @@
     "@evatick/catalog-sqlite": "workspace:*",
     "@evatick/core": "workspace:*",
     "@evatick/provider-akshare": "workspace:*",
+    "@evatick/provider-crypto": "workspace:*",
     "@evatick/cordis-runtime": "workspace:*",
     "@evatick/transport-http": "workspace:*"
   }

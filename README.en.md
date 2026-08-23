@@ -43,6 +43,11 @@ Traditional financial APIs often expose provider-specific functions, identifiers
 | --- | --- | :---: | :---: | :---: |
 | Equities | Mainland China A-shares | ✓ | Intraday, daily | — |
 | Indices | Shanghai, Shenzhen, and CSI indices | ✓ | Intraday, daily | ✓ |
+| Cryptocurrencies | Binance and Coinbase Exchange | ✓ | Minute through monthly, depending on venue | — |
+
+Cryptocurrency instruments are exchange-scoped, for example
+`global:crypto:BINANCE:BTC-USDT` and `global:crypto:COINBASE:BTC-USDT`. The server
+never falls back across these exchanges or combines their prices.
 
 The server also provides:
 
@@ -183,10 +188,10 @@ SQLite instrument catalog      DuckDB history store
 Cordis provider plugins
      │
      ▼
-AKShare Python bridge process
+AKShare Python bridge process · public cryptocurrency REST APIs
      │
      ▼
-Sina · Eastmoney · Tencent Finance · BaoStock · other upstreams
+Sina · Eastmoney · Tencent Finance · BaoStock · Binance · Coinbase
 ```
 
 The CLI communicates with the server exclusively through HTTP and does not depend on server implementation code. Cordis manages provider-plugin lifecycles, while the Python data bridge runs in an isolated process.
@@ -201,6 +206,7 @@ The CLI communicates with the server exclusively through HTTP and does not depen
 | `packages/catalog-sqlite` | SQLite instrument-catalog implementation |
 | `packages/cordis-runtime` | Cordis plugin-runtime integration |
 | `packages/provider-akshare` | AKShare provider plugin |
+| `packages/provider-crypto` | Public Binance and Coinbase market-data provider plugins |
 | `providers/akshare-python` | Process-isolated Python data bridge |
 | `contracts/openapi` | Public HTTP API contract |
 | `deploy` | Configuration and systemd deployment examples |

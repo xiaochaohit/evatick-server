@@ -43,6 +43,10 @@ EVA Tick Server（`evatickd`）将分散、异构的市场数据转换为适合�
 | --- | --- | :---: | :---: | :---: |
 | 股票 | 中国内地 A 股 | ✓ | 分钟、日线 | — |
 | 指数 | 上交所、深交所、中证指数 | ✓ | 分钟、日线 | ✓ |
+| 加密货币 | Binance、Coinbase Exchange | ✓ | 分钟至月线（依交易所能力） | — |
+
+加密货币按交易所建立独立规范标的，例如 `global:crypto:BINANCE:BTC-USDT`
+和 `global:crypto:COINBASE:BTC-USDT`。服务端不会在两个交易所之间自动回退或混合价格。
 
 服务端还提供：
 
@@ -183,10 +187,10 @@ SQLite 标的目录       DuckDB 历史仓库
 Cordis 数据提供方插件
      │
      ▼
-AKShare Python 桥接进程
+AKShare Python 桥接进程 · 公共加密货币 REST API
      │
      ▼
-新浪 · 东方财富 · 腾讯财经 · BaoStock 等上游数据源
+新浪 · 东方财富 · 腾讯财经 · BaoStock · Binance · Coinbase
 ```
 
 CLI 与服务端只通过 HTTP API 通信，不依赖服务端实现代码。数据提供方插件由 Cordis 管理生命周期；Python 数据桥接运行在独立进程中。
@@ -201,6 +205,7 @@ CLI 与服务端只通过 HTTP API 通信，不依赖服务端实现代码。数
 | `packages/catalog-sqlite` | SQLite 标的目录实现 |
 | `packages/cordis-runtime` | Cordis 插件运行时集成 |
 | `packages/provider-akshare` | AKShare 数据提供方插件 |
+| `packages/provider-crypto` | Binance 与 Coinbase 公共行情数据提供方插件 |
 | `providers/akshare-python` | 进程隔离的 Python 数据桥接 |
 | `contracts/openapi` | 公开 HTTP API 契约 |
 | `deploy` | 配置与 systemd 部署示例 |

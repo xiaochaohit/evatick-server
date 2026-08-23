@@ -229,6 +229,13 @@ export class AkshareProvider implements InstrumentProvider {
   }
 
   async checkDataSource(call: DataSourceCheckCall): Promise<DataSourceCheckResult> {
+    if (call.category === 'crypto') {
+      throw new ProviderError(
+        'UNSUPPORTED_DATA_SOURCE_CATEGORY',
+        `${call.sourceId} does not support ${call.category}`,
+        false,
+      )
+    }
     if (!this.dataSources.some((source) => source.id === call.sourceId)) {
       throw new ProviderError('UNKNOWN_DATA_SOURCE', `unknown AKShare data source: ${call.sourceId}`, false)
     }
