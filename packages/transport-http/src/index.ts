@@ -75,6 +75,8 @@ function isInstrumentType(value: unknown): value is InstrumentType {
   return value === 'equity' || value === 'index' || value === 'future' || value === 'crypto'
 }
 
+const FUTURES_SERIES_ID_PATTERN = /^cn:future-series:[^:]+:[^:]+:main$/
+
 export class EvaHttpService extends Service {
   static inject = ['marketProviderRegistry', 'marketCatalogStore']
 
@@ -164,6 +166,7 @@ export class EvaHttpService extends Service {
     const adjustmentFactorFlights = new SingleFlight()
     const quoteFlights = new SingleFlight()
     const constituentFlights = new SingleFlight()
+    const futuresSnapshotFlights = new SingleFlight()
     this.healthMonitor = new ProviderHealthMonitor(
       () => ctx.marketProviderRegistry.list(),
       Math.max(this.config.healthCheckIntervalMs ?? 3_600_000, 0),
@@ -367,6 +370,35 @@ export class EvaHttpService extends Service {
       })
     }
 
+    const loadFuturesDailySnapshot = (venue: string, tradingDate: string) =>
+      futuresSnapshotFlights.run(`${venue}:${tradingDate}`, async () => {
+        const providers = await providersFor({ type: 'future' })
+        let lastError: unknown
+        for (const provider of providers) {
+          if (typeof provider.getFuturesDailySnapshot !== 'function') continue
+          try {
+            const result = await retryProviderCall({
+              ...routingOptions,
+              invoke: (signal) => providerCalls.run(() =>
+                provider.getFuturesDailySnapshot!({ venue, tradingDate, signal })),
+            })
+            return {
+              provider: provider.id,
+              upstream: result.value[0]?.source ?? venue.toLowerCase(),
+              rows: result.value,
+            }
+          } catch (error) {
+            lastError = error
+          }
+        }
+        if (lastError instanceof Error) throw lastError
+        throw new ProviderError(
+          'CAPABILITY_UNAVAILABLE',
+          'No enabled provider supplies futures daily snapshots.',
+          false,
+        )
+      })
+
     this.dataSyncManager = new DataSyncManager({
       databasePath: this.config.historyPath ?? ':memory:',
       loadInstruments: async () => (await loadCatalog()).instruments,
@@ -380,6 +412,7 @@ export class EvaHttpService extends Service {
         }
       },
       loadAdjustmentFactors,
+      loadFuturesDailySnapshot,
     })
 
     const dataSourcesResponse = async () => {
@@ -599,6 +632,32 @@ export class EvaHttpService extends Service {
       return {
         schema: 'eva.local-coverage.v1',
         data: await this.dataSyncManager.browseCoverage(request.params.instrumentId, interval),
+        meta: { local_only: true, generated_at: new Date().toISOString() },
+      }
+    })
+
+    this.app.get<{
+      Params: { seriesId: string }
+      Querystring: { start?: string; end?: string }
+    }>('/v1/local-data/futures-series/:seriesId/members', async (request, reply) => {
+      const { start, end } = request.query
+      const validDate = (value: string | undefined) =>
+        value === undefined || /^\d{4}-\d{2}-\d{2}$/.test(value)
+      if (!FUTURES_SERIES_ID_PATTERN.test(request.params.seriesId) ||
+        !validDate(start) || !validDate(end) || (start && end && start > end)) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-futures-series-member-query',
+          title: 'Invalid futures series member query', status: 400,
+          code: 'INVALID_FUTURES_SERIES_MEMBER_QUERY',
+          detail: 'seriesId, start, or end is invalid.', retryable: false,
+          request_id: `req_${randomUUID()}`,
+        })
+      }
+      return {
+        schema: 'eva.futures-series-member-list.v1',
+        data: await this.dataSyncManager.browseFuturesSeriesMembers(
+          request.params.seriesId, start, end,
+        ),
         meta: { local_only: true, generated_at: new Date().toISOString() },
       }
     })
@@ -1387,7 +1446,7 @@ export class EvaHttpService extends Service {
         })
       }
       let loadedFactors: Awaited<ReturnType<typeof loadAdjustmentFactors>> = null
-      if (interval === '1d' || interval === '1m') {
+      if (instrument.type !== 'future' && (interval === '1d' || interval === '1m')) {
         let localBars = await this.dataSyncManager.readBars({
           instrument,
           interval,
@@ -1471,7 +1530,7 @@ export class EvaHttpService extends Service {
           end: request.query.end,
         })
         const cacheWarnings: string[] = []
-        if (interval === '1d' || interval === '1m') {
+        if (instrument.type !== 'future' && (interval === '1d' || interval === '1m')) {
           try {
             await this.dataSyncManager.storeBars(instrument, {
               provider: result.provider,

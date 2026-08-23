@@ -143,6 +143,100 @@ describe('local historical data synchronization', () => {
     }
   })
 
+  it('lists futures products and builds a main continuous series from exchange snapshots', async () => {
+    const requestedSnapshots: string[] = []
+    const provider: InstrumentProvider = {
+      id: 'futures-snapshot-fixture',
+      async listInstruments() {
+        return ['i2609', 'i2610', 'm2609'].map((symbol) => ({
+          type: 'future' as const, market: 'CN' as const,
+          name: `${symbol.startsWith('i') ? '铁矿石' : '豆粕'} ${symbol}`, symbol,
+          providerSymbol: `DCE:${symbol}`, venue: 'DCE', currency: 'CNY',
+          status: 'active' as const, capabilities: ['bars' as const],
+        }))
+      },
+      async getFuturesDailySnapshot(call) {
+        requestedSnapshots.push(`${call.venue}:${call.tradingDate}`)
+        const secondDay = call.tradingDate === '2026-08-21'
+        return [
+          {
+            source: 'dce', venue: 'DCE', symbol: 'i2609', tradingDate: call.tradingDate,
+            open: '790', high: '805', low: '788', close: '801', settlement: '800',
+            volume: 1200, turnover: null, openInterest: secondDay ? 4500 : 5500,
+          },
+          {
+            source: 'dce', venue: 'DCE', symbol: 'i2610', tradingDate: call.tradingDate,
+            open: '780', high: '795', low: '777', close: '790', settlement: '789',
+            volume: 900, turnover: null, openInterest: secondDay ? 5100 : 4300,
+          },
+          {
+            source: 'dce', venue: 'DCE', symbol: 'm2609', tradingDate: call.tradingDate,
+            open: '3000', high: '3050', low: '2980', close: '3020', settlement: '3010',
+            volume: 2000, turnover: null, openInterest: 8000,
+          },
+        ]
+      },
+    }
+    const server = await createEvaTickServer({ healthCheckIntervalMs: 0 })
+    await server.mountProvider(provider)
+    try {
+      const catalog = await fetch(
+        `${server.url}/v1/data-sync/instruments?type=future&limit=50&offset=0`,
+      )
+      expect(await catalog.json()).toMatchObject({
+        data: [
+          {
+            instrument_id: 'cn:future-series:DCE:I:main', symbol: 'I', venue: 'DCE',
+            name: '铁矿石 I 主力连续（未复权）',
+          },
+          {
+            instrument_id: 'cn:future-series:DCE:M:main', symbol: 'M', venue: 'DCE',
+          },
+        ],
+        page: { total: 2 },
+      })
+
+      const seriesId = 'cn:future-series:DCE:I:main'
+      const started = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['future'], interval: '1d',
+          start: '2026-08-20', end: '2026-08-21', adjustment: 'none',
+        }),
+      })
+      expect(started.status).toBe(202)
+      await waitForRun(server.url)
+      expect(requestedSnapshots).toEqual(['DCE:2026-08-20', 'DCE:2026-08-21'])
+
+      const bars = await fetch(
+        `${server.url}/v1/local-data/instruments/${encodeURIComponent(seriesId)}/bars?start=2026-08-20&end=2026-08-21&limit=20`,
+      )
+      expect(await bars.json()).toMatchObject({
+        data: [
+          { trading_date: '2026-08-21', close: '790' },
+          { trading_date: '2026-08-20', close: '801' },
+        ],
+      })
+      const members = await fetch(
+        `${server.url}/v1/local-data/futures-series/${encodeURIComponent(seriesId)}/members`,
+      )
+      expect(await members.json()).toMatchObject({
+        data: [
+          {
+            trading_date: '2026-08-20', contract_symbol: 'i2609',
+            selection_rule: 'same-day-max-open-interest-v1',
+          },
+          {
+            trading_date: '2026-08-21', contract_symbol: 'i2610',
+            selection_rule: 'same-day-max-open-interest-v1',
+          },
+        ],
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
   it('stores one-minute bars separately and serves covered requests from DuckDB', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'eva-minute-sync-'))
     const requestedIntervals: string[] = []
@@ -399,6 +493,9 @@ describe('local historical data synchronization', () => {
       expect(page).toContain('<th>交易场所</th>')
       expect(page).toContain('搜索标的')
       expect(page).toContain('同步此标的')
+      expect(page).toContain('期货按品种同步主力连续序列')
+      expect(page).toContain('<th>品种</th><th>品种代码</th>')
+      expect(page).toContain('同步主力连续')
       expect(page).toContain('同步所选')
       expect(page).toContain('全部同步')
       expect(page).toContain('刷新标的目录')

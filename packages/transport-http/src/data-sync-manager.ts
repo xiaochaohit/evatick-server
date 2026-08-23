@@ -12,6 +12,7 @@ import type {
   PriceAdjustment,
   ProviderAdjustmentFactor,
   ProviderBar,
+  ProviderFuturesDailyRow,
 } from '@evatick/core'
 
 export type DataSyncInterval = Extract<BarInterval, '1m' | '1d'>
@@ -39,6 +40,24 @@ export interface SyncedAdjustmentFactors {
   upstream?: string
   factors: readonly ProviderAdjustmentFactor[]
   asOfDate: string
+}
+
+export interface SyncedFuturesDailySnapshot {
+  provider: string
+  upstream?: string
+  rows: readonly ProviderFuturesDailyRow[]
+}
+
+interface FuturesSeriesMember {
+  tradingDate: string
+  contractId: string
+  contractSymbol: string
+  selectionMetric: 'open_interest' | 'volume'
+  selectionValue: number
+}
+
+interface SyncedFuturesMainSeries extends SyncedBars {
+  members: readonly FuturesSeriesMember[]
 }
 
 export interface DataSyncRun {
@@ -212,6 +231,10 @@ interface DataSyncDependencies {
   loadAdjustmentFactors(
     instrument: CatalogInstrument,
   ): Promise<SyncedAdjustmentFactors | null>
+  loadFuturesDailySnapshot(
+    venue: string,
+    tradingDate: string,
+  ): Promise<SyncedFuturesDailySnapshot>
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -256,6 +279,30 @@ function laterDate(left: string, right: string): string {
   return left > right ? left : right
 }
 
+const FUTURES_SERIES_ID = /^cn:future-series:([^:]+):([^:]+):main$/
+
+function futuresProductCode(symbol: string): string | null {
+  return symbol.match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? null
+}
+
+function futuresProductName(instrument: CatalogInstrument): string {
+  const stripped = instrument.name.replace(instrument.symbol, '').trim()
+  return stripped || futuresProductCode(instrument.symbol) || instrument.symbol
+}
+
+function futuresMainSeriesInstrument(
+  venue: string,
+  product: string,
+  name: string,
+): CatalogInstrument {
+  return {
+    instrumentId: `cn:future-series:${venue}:${product}:main`,
+    type: 'future', market: 'CN', name: `${name} ${product} 主力连续（未复权）`,
+    symbol: product, venue, currency: 'CNY', status: 'active', aliases: [],
+    capabilities: ['bars'], identifiers: [],
+  }
+}
+
 function adjustedPrice(
   value: string,
   factor: number,
@@ -279,6 +326,34 @@ export class DataSyncManager {
   private readonly schedules = new Map<number, DataSyncSchedule>()
   private pendingScheduleIds: number[] = []
   private readonly writes = new BoundedExecutor(1)
+  private readonly futuresSnapshotCache = new Map<
+    string,
+    Promise<SyncedFuturesDailySnapshot>
+  >()
+
+  private syncInstruments(
+    catalog: readonly CatalogInstrument[],
+    instrumentTypes: readonly InstrumentType[],
+  ): readonly CatalogInstrument[] {
+    const regular = catalog.filter((instrument) =>
+      instrument.type !== 'future' &&
+      instrumentTypes.includes(instrument.type) &&
+      instrument.capabilities.includes('bars'))
+    if (!instrumentTypes.includes('future')) return regular
+    const products = new Map<string, CatalogInstrument>()
+    for (const contract of catalog) {
+      if (contract.type !== 'future' || !contract.venue || !contract.capabilities.includes('bars')) continue
+      const product = futuresProductCode(contract.symbol)
+      if (!product) continue
+      const key = `${contract.venue}:${product}`
+      if (!products.has(key)) {
+        products.set(key, futuresMainSeriesInstrument(
+          contract.venue, product, futuresProductName(contract),
+        ))
+      }
+    }
+    return [...regular, ...products.values()]
+  }
 
   constructor(private readonly dependencies: DataSyncDependencies) {
     this.ready = this.initialize()
@@ -383,7 +458,9 @@ export class DataSyncManager {
     if (this.activeRun) throw new Error('DATA_SYNC_ALREADY_RUNNING')
     const source = (await this.listRuns(10_000)).find((run) => run.run_id === runId)
     if (!source) throw new Error('DATA_SYNC_RUN_NOT_FOUND')
-    const catalog = await this.dependencies.loadInstruments()
+    const catalog = this.syncInstruments(
+      await this.dependencies.loadInstruments(), source.instrument_types,
+    )
     const items = await this.runItems(runId)
     const targetItems = items.filter((item) =>
       (!instrumentId || item.instrument_id === instrumentId) && (!failedOnly || item.status === 'failed'))
@@ -396,9 +473,7 @@ export class DataSyncManager {
       ? catalog.filter((instrument) => targetIds.has(instrument.instrumentId))
       : failedOnly
         ? []
-        : catalog.filter((instrument) =>
-          source.instrument_types.includes(instrument.type) && instrument.capabilities.includes('bars'))
-          .slice(0, source.limit ?? undefined)
+        : catalog.slice(0, source.limit ?? undefined)
     if (!instruments.length) throw new Error(failedOnly ? 'DATA_SYNC_NO_FAILED_ITEMS' : 'DATA_SYNC_NO_ITEMS')
     if (targetIds.size && instruments.length !== targetIds.size) throw new Error('DATA_SYNC_CATALOG_CHANGED')
     const retryRun = await this.createRun({
@@ -430,9 +505,10 @@ export class DataSyncManager {
   ): Promise<DataSyncSchedule> {
     await this.ready
     if (schedule.instrument_ids?.length) {
-      const catalog = await this.dependencies.loadInstruments()
-      const eligibleIds = new Set(catalog.filter((instrument) =>
-        schedule.instrument_types.includes(instrument.type) && instrument.capabilities.includes('bars'))
+      const catalog = this.syncInstruments(
+        await this.dependencies.loadInstruments(), schedule.instrument_types,
+      )
+      const eligibleIds = new Set(catalog
         .map((instrument) => instrument.instrumentId))
       if (schedule.instrument_ids.some((instrumentId) => !eligibleIds.has(instrumentId))) {
         throw new Error('DATA_SYNC_INSTRUMENTS_NOT_FOUND')
@@ -597,10 +673,10 @@ export class DataSyncManager {
   }): Promise<{ total: number; items: readonly SyncInstrumentSummary[] }> {
     await this.ready
     const query = request.query?.replaceAll(/\s+/g, '').toLowerCase() ?? ''
-    const catalog = (await this.dependencies.loadInstruments())
+    const catalog = this.syncInstruments(
+      await this.dependencies.loadInstruments(), [request.instrumentType],
+    )
       .filter((instrument) =>
-        instrument.type === request.instrumentType &&
-        instrument.capabilities.includes('bars') &&
         (!query || [instrument.symbol, instrument.name, instrument.instrumentId]
           .some((value) => value.replaceAll(/\s+/g, '').toLowerCase().includes(query))))
       .sort((left, right) => left.symbol.localeCompare(right.symbol))
@@ -788,6 +864,38 @@ export class DataSyncManager {
     }
   }
 
+  async browseFuturesSeriesMembers(
+    seriesId: string,
+    start?: string,
+    end?: string,
+  ): Promise<readonly {
+    trading_date: string
+    contract_id: string
+    contract_symbol: string
+    selection_rule: string
+    selection_metric: string
+    selection_value: number
+  }[]> {
+    await this.ready
+    const reader = await this.db.runAndReadAll(`
+      SELECT trading_date::VARCHAR AS trading_date, contract_id, contract_symbol,
+        selection_rule, selection_metric, selection_value
+      FROM futures_series_members
+      WHERE series_id = $series_id
+        AND ($start = '' OR trading_date >= $start::DATE)
+        AND ($end = '' OR trading_date <= $end::DATE)
+      ORDER BY trading_date
+    `, { series_id: seriesId, start: start ?? '', end: end ?? '' })
+    return reader.getRowObjectsJson().map((row) => ({
+      trading_date: String(row.trading_date),
+      contract_id: String(row.contract_id),
+      contract_symbol: String(row.contract_symbol),
+      selection_rule: String(row.selection_rule),
+      selection_metric: String(row.selection_metric),
+      selection_value: Number(row.selection_value),
+    }))
+  }
+
   async start(
     request: DataSyncRequest,
     metadata: { trigger?: DataSyncRun['trigger']; scheduleId?: number } = {},
@@ -803,8 +911,7 @@ export class DataSyncManager {
     }
     if (request.start > request.end) throw new Error('DATA_SYNC_INVALID_RANGE')
     const catalog = await this.dependencies.loadInstruments()
-    const eligible = catalog.filter((instrument) =>
-      request.instrumentTypes.includes(instrument.type) && instrument.capabilities.includes('bars'))
+    const eligible = this.syncInstruments(catalog, request.instrumentTypes)
     let instruments: readonly CatalogInstrument[]
     if (request.instrumentIds?.length) {
       const byId = new Map(eligible.map((instrument) => [instrument.instrumentId, instrument]))
@@ -869,6 +976,7 @@ export class DataSyncManager {
     }
     this.activeRun = run
     this.cancelled = false
+    this.futuresSnapshotCache.clear()
     await this.persistRun(run)
     await this.createRunItems(run.run_id, instruments)
     if (run.retry_of_run_id) await this.markRetryStarted(run.retry_of_run_id, run.run_id)
@@ -889,9 +997,9 @@ export class DataSyncManager {
       throw new Error('DATA_SYNC_NOT_RESUMABLE')
     }
 
-    const catalog = await this.dependencies.loadInstruments()
-    const eligible = catalog.filter((instrument) =>
-      previous.instrument_types.includes(instrument.type) && instrument.capabilities.includes('bars'))
+    const eligible = this.syncInstruments(
+      await this.dependencies.loadInstruments(), previous.instrument_types,
+    )
     const byId = new Map(eligible.map((instrument) => [instrument.instrumentId, instrument]))
     const instruments = previous.instrument_ids?.length
       ? previous.instrument_ids.flatMap((instrumentId) => {
@@ -931,6 +1039,7 @@ export class DataSyncManager {
         this.activeRun = null
       })
       .finally(() => {
+        this.futuresSnapshotCache.clear()
         this.execution = null
         void this.runNextScheduledTask()
       })
@@ -1350,6 +1459,19 @@ export class DataSyncManager {
         updated_at TIMESTAMP NOT NULL,
         PRIMARY KEY (instrument_id, adjustment)
       );
+      CREATE TABLE IF NOT EXISTS futures_series_members (
+        series_id VARCHAR NOT NULL,
+        trading_date DATE NOT NULL,
+        contract_id VARCHAR NOT NULL,
+        contract_symbol VARCHAR NOT NULL,
+        selection_rule VARCHAR NOT NULL,
+        selection_metric VARCHAR NOT NULL,
+        selection_value DOUBLE NOT NULL,
+        provider VARCHAR NOT NULL,
+        upstream VARCHAR,
+        updated_at TIMESTAMP NOT NULL,
+        PRIMARY KEY (series_id, trading_date)
+      );
       CREATE TABLE IF NOT EXISTS minute_sync_coverage (
         instrument_id VARCHAR NOT NULL,
         adjustment VARCHAR NOT NULL,
@@ -1547,12 +1669,14 @@ export class DataSyncManager {
           ? laterDate(run.start, subtractDays(storedRange.last, run.lookback_days))
           : run.start
         const [result, adjustmentFactors] = await Promise.all([
-          this.dependencies.loadBars(instrument, {
-            interval: run.interval,
-            start,
-            end: run.end,
-            adjustment: 'none',
-          }),
+          FUTURES_SERIES_ID.test(instrument.instrumentId)
+            ? this.loadFuturesMainSeries(instrument, start, run.end)
+            : this.dependencies.loadBars(instrument, {
+                interval: run.interval,
+                start,
+                end: run.end,
+                adjustment: 'none',
+              }),
           instrument.type === 'equity' && run.interval === '1d'
             ? this.dependencies.loadAdjustmentFactors(instrument)
             : null,
@@ -1560,6 +1684,11 @@ export class DataSyncManager {
         await this.writes.run(async () => {
           await this.upsertInstrument(instrument)
           await this.upsertBars(instrument, result, run.adjustment, run.interval)
+          if ('members' in result && Array.isArray(result.members)) {
+            await this.upsertFuturesSeriesMembers(
+              instrument.instrumentId, result as SyncedFuturesMainSeries,
+            )
+          }
           if (adjustmentFactors) {
             await this.upsertAdjustmentFactors(instrument.instrumentId, adjustmentFactors)
           }
@@ -1619,6 +1748,70 @@ export class DataSyncManager {
     const source = run.retry_of_run_id ? await this.reconcileRetry(run) : null
     this.lastRun = source ?? run
     this.activeRun = null
+  }
+
+  private async loadFuturesMainSeries(
+    instrument: CatalogInstrument,
+    start: string,
+    end: string,
+  ): Promise<SyncedFuturesMainSeries> {
+    const match = instrument.instrumentId.match(FUTURES_SERIES_ID)
+    if (!match || !instrument.venue) throw new Error('INVALID_FUTURES_SERIES_ID')
+    const product = match[2]!
+    const bars: ProviderBar[] = []
+    const members: FuturesSeriesMember[] = []
+    const providers = new Set<string>()
+    const upstreams = new Set<string>()
+    for (let tradingDate = start; tradingDate <= end; tradingDate = addDays(tradingDate, 1)) {
+      if (this.cancelled) break
+      const snapshotKey = `${instrument.venue}:${tradingDate}`
+      let snapshotRequest = this.futuresSnapshotCache.get(snapshotKey)
+      if (!snapshotRequest) {
+        snapshotRequest = this.dependencies.loadFuturesDailySnapshot(
+          instrument.venue, tradingDate,
+        )
+        this.futuresSnapshotCache.set(snapshotKey, snapshotRequest)
+      }
+      const snapshot = await snapshotRequest
+      providers.add(snapshot.provider)
+      if (snapshot.upstream) upstreams.add(snapshot.upstream)
+      const candidates = snapshot.rows.filter((row) =>
+        row.venue === instrument.venue &&
+        row.tradingDate === tradingDate &&
+        futuresProductCode(row.symbol) === product)
+      if (!candidates.length) continue
+      const useOpenInterest = candidates.some((row) => row.openInterest !== null)
+      const metric = useOpenInterest ? 'open_interest' : 'volume'
+      const selected = [...candidates].sort((left, right) => {
+        const leftValue = (useOpenInterest ? left.openInterest : left.volume) ?? -1
+        const rightValue = (useOpenInterest ? right.openInterest : right.volume) ?? -1
+        return rightValue - leftValue || left.symbol.localeCompare(right.symbol)
+      })[0]!
+      const selectionValue = (useOpenInterest ? selected.openInterest : selected.volume) ?? 0
+      bars.push({
+        source: selected.source ?? snapshot.upstream,
+        interval: '1d', tradingDate,
+        periodStart: `${tradingDate}T00:00:00+08:00`,
+        periodEnd: `${tradingDate}T23:59:59+08:00`,
+        currency: instrument.currency,
+        open: selected.open, high: selected.high, low: selected.low, close: selected.close,
+        volume: selected.volume, turnover: selected.turnover,
+        adjustment: 'none', complete: true,
+      })
+      members.push({
+        tradingDate,
+        contractId: `cn:future:${instrument.venue}:${selected.symbol}`,
+        contractSymbol: selected.symbol,
+        selectionMetric: metric,
+        selectionValue,
+      })
+    }
+    return {
+      provider: [...providers].join(',') || 'exchange-snapshot',
+      upstream: [...upstreams].join(',') || instrument.venue.toLowerCase(),
+      bars,
+      members,
+    }
   }
 
   private async upsertInstrument(instrument: CatalogInstrument): Promise<void> {
@@ -1786,6 +1979,39 @@ export class DataSyncManager {
         upstream = excluded.upstream,
         fetched_at = excluded.fetched_at
     `)
+  }
+
+  private async upsertFuturesSeriesMembers(
+    seriesId: string,
+    result: SyncedFuturesMainSeries,
+  ): Promise<void> {
+    for (const member of result.members) {
+      await this.db.run(`
+        INSERT INTO futures_series_members VALUES (
+          $series_id, $trading_date::DATE, $contract_id, $contract_symbol,
+          'same-day-max-open-interest-v1', $selection_metric, $selection_value,
+          $provider, $upstream, current_timestamp
+        )
+        ON CONFLICT (series_id, trading_date) DO UPDATE SET
+          contract_id = excluded.contract_id,
+          contract_symbol = excluded.contract_symbol,
+          selection_rule = excluded.selection_rule,
+          selection_metric = excluded.selection_metric,
+          selection_value = excluded.selection_value,
+          provider = excluded.provider,
+          upstream = excluded.upstream,
+          updated_at = excluded.updated_at
+      `, {
+        series_id: seriesId,
+        trading_date: member.tradingDate,
+        contract_id: member.contractId,
+        contract_symbol: member.contractSymbol,
+        selection_metric: member.selectionMetric,
+        selection_value: member.selectionValue,
+        provider: result.provider,
+        upstream: result.upstream ?? null,
+      })
+    }
   }
 
   private async upsertMinuteBars(

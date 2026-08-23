@@ -8,6 +8,7 @@ import {
 
 describe('provider routing over HTTP', () => {
   it('serves canonical mainland futures from an official exchange source', async () => {
+    let barRequests = 0
     const provider: InstrumentProvider = {
       id: 'official-futures',
       dataSources: [{
@@ -22,6 +23,7 @@ describe('provider routing over HTTP', () => {
         }]
       },
       async getBars() {
+        barRequests += 1
         return [{
           source: 'cffex', interval: '1d', tradingDate: '2026-08-21',
           periodStart: '2026-08-21T09:30:00+08:00', periodEnd: '2026-08-21T15:15:00+08:00',
@@ -40,13 +42,20 @@ describe('provider routing over HTTP', () => {
         venue: 'CFFEX', capabilities: ['bars', 'quote'],
       }] })
       const bars = await fetch(
-        `${server.url}/v1/instruments/${encodeURIComponent('cn:future:CFFEX:IF2609')}/bars?interval=1d`,
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:future:CFFEX:IF2609')}/bars?interval=1d&start=2026-08-20&end=2026-08-21`,
       )
       expect(bars.status).toBe(200)
       expect(await bars.json()).toMatchObject({
         data: [{ instrument_id: 'cn:future:CFFEX:IF2609', close: '3930' }],
         meta: { sources: [{ provider: 'official-futures', upstream: 'cffex' }] },
       })
+      const repeatedBars = await fetch(
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:future:CFFEX:IF2609')}/bars?interval=1d&start=2026-08-20&end=2026-08-21`,
+      )
+      expect(await repeatedBars.json()).toMatchObject({
+        meta: { sources: [{ provider: 'official-futures', upstream: 'cffex' }] },
+      })
+      expect(barRequests).toBe(2)
     } finally {
       await server.close()
     }
