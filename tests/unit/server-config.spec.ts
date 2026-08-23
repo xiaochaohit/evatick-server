@@ -49,6 +49,7 @@ describe('EVA daemon configuration', () => {
       })
       expect(loaded.storage.catalogPath).toBe(join(directory, 'data/catalog.sqlite'))
       expect(loaded.storage.historyPath).toBe(join(directory, 'data/history.duckdb'))
+      expect(loaded.storage.dataSourcePreferencesPath).toBe(join(directory, 'data/data-source-preferences.json'))
       expect(loaded.admin.credentialsPath).toBe(join(directory, 'data/admin-credentials.json'))
       expect(loaded.providers.akshare.pythonExecutable).toBe(join(directory, 'python/bin/python'))
     } finally {

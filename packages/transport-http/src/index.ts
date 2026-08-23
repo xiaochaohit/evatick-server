@@ -26,6 +26,8 @@ import { AdminAuth } from './admin-auth.js'
 import { ApiKeyAuth } from './api-key-auth.js'
 import { apiKeyDashboardHtml } from './api-key-dashboard.js'
 import { dataBrowserDashboardHtml } from './data-browser-dashboard.js'
+import { dataSourceDashboardHtml } from './data-source-dashboard.js'
+import { DataSourcePreferences } from './data-source-preferences.js'
 import { DataSyncManager } from './data-sync-manager.js'
 import { dataSyncDashboardHtml } from './data-sync-dashboard.js'
 import { ProviderHealthMonitor } from './provider-health.js'
@@ -73,6 +75,7 @@ export class EvaHttpService extends Service {
 
   private readonly app: FastifyInstance
   private readonly healthMonitor: ProviderHealthMonitor
+  private readonly dataSourcePreferences: DataSourcePreferences
   private readonly dataSyncManager: DataSyncManager
   private readonly adminAuth: AdminAuth
   private readonly apiKeyAuth: ApiKeyAuth
@@ -90,6 +93,7 @@ export class EvaHttpService extends Service {
       adminPassword?: string
       adminCredentialsPath?: string
       apiKeysPath?: string
+      dataSourcePreferencesPath?: string
     } = {},
   ) {
     super(ctx, 'evaHttp')
@@ -150,6 +154,13 @@ export class EvaHttpService extends Service {
       Math.max(this.config.healthCheckIntervalMs ?? 3_600_000, 0),
       Math.max(this.config.healthCheckTimeoutMs ?? routingOptions.timeoutMs, 1),
     )
+    this.dataSourcePreferences = new DataSourcePreferences(
+      () => ctx.marketProviderRegistry.list(),
+      this.config.dataSourcePreferencesPath,
+    )
+
+    const providersFor = (instrument: Pick<CatalogInstrument, 'type'>) =>
+      this.dataSourcePreferences.orderProviders(instrument.type)
 
     const loadCatalog = async () => {
       const providers = ctx.marketProviderRegistry.list()
@@ -261,7 +272,7 @@ export class EvaHttpService extends Service {
         return null
       }
       const result = await routeInstrumentData({
-        providers: ctx.marketProviderRegistry.list(),
+        providers: await providersFor(instrument),
         instrument,
         capability: 'bars',
         ...routingOptions,
@@ -284,7 +295,7 @@ export class EvaHttpService extends Service {
       loadInstruments: async () => (await loadCatalog()).instruments,
       loadBars: async (instrument, request) => {
         const result = await routeInstrumentData({
-          providers: ctx.marketProviderRegistry.list(),
+          providers: await providersFor(instrument),
           instrument,
           capability: 'bars',
           ...routingOptions,
@@ -307,22 +318,29 @@ export class EvaHttpService extends Service {
       loadAdjustmentFactors,
     })
 
-    const dataSourcesResponse = async () => ({
-      schema: 'eva.data-source-list.v1',
-      data: [
-        ...await this.dataSyncManager.localDataSources(),
-        ...this.healthMonitor.list(),
-      ],
-      schedule: this.healthMonitor.schedule,
-      generated_at: new Date().toISOString(),
-    })
+    const dataSourcesResponse = async () => {
+      const routing = await this.dataSourcePreferences.list()
+      return {
+        schema: 'eva.data-source-list.v1',
+        data: [
+          ...await this.dataSyncManager.localDataSources(),
+          ...this.healthMonitor.list(),
+        ],
+        routing,
+        schedule: this.healthMonitor.schedule,
+        generated_at: new Date().toISOString(),
+      }
+    }
 
     this.app.get('/admin', async (_request, reply) => reply
       .header('cache-control', 'no-store')
       .type('text/html; charset=utf-8')
       .send(dataBrowserDashboardHtml))
 
-    this.app.get('/admin/data-sources', async (_request, reply) => reply.redirect('/admin#data-sources'))
+    this.app.get('/admin/data-sources', async (_request, reply) => reply
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(dataSourceDashboardHtml))
 
     this.app.get('/admin/data-sync', async (_request, reply) => reply
       .header('cache-control', 'no-store')
@@ -854,6 +872,28 @@ export class EvaHttpService extends Service {
       return await dataSourcesResponse()
     })
 
+    this.app.put<{
+      Params: { category: string }
+      Body: { source_ids?: unknown[] }
+    }>('/v1/data-sources/order/:category', async (request, reply) => {
+      try {
+        await this.dataSourcePreferences.update(
+          request.params.category,
+          request.body?.source_ids ?? [],
+        )
+      } catch (error) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-data-source-order',
+          title: 'Invalid data source order', status: 400,
+          code: 'INVALID_DATA_SOURCE_ORDER',
+          detail: error instanceof Error ? error.message : 'data source order is invalid',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      reply.header('cache-control', 'no-store')
+      return await dataSourcesResponse()
+    })
+
     this.app.get('/v1/health', async () => {
       const providers = ctx.marketProviderRegistry.list().length
       return {
@@ -1120,7 +1160,7 @@ export class EvaHttpService extends Service {
       }
       try {
         const result = await routeInstrumentData({
-          providers: ctx.marketProviderRegistry.list(),
+          providers: await providersFor(instrument),
           instrument,
           capability: 'quote',
           ...routingOptions,
@@ -1308,7 +1348,7 @@ export class EvaHttpService extends Service {
           await this.dataSyncManager.storeAdjustmentFactors(instrument, loadedFactors)
         }
         const result = await routeInstrumentData({
-          providers: ctx.marketProviderRegistry.list(),
+          providers: await providersFor(instrument),
           instrument,
           capability: 'bars',
           ...routingOptions,
@@ -1423,7 +1463,7 @@ export class EvaHttpService extends Service {
         }
         try {
           const result = await routeInstrumentData({
-            providers: ctx.marketProviderRegistry.list(),
+            providers: await providersFor(instrument),
             instrument,
             capability: 'constituents',
             ...routingOptions,

@@ -118,6 +118,10 @@ export interface InstrumentProvider {
   readonly dataSources?: readonly ProviderDataSource[]
   listInstruments(signal?: AbortSignal): Promise<readonly ProviderInstrument[]>
   checkDataSource?(call: DataSourceCheckCall): Promise<DataSourceCheckResult>
+  setDataSourceOrder?(
+    category: DataSourceCategory,
+    sourceIds: readonly string[],
+  ): Promise<void> | void
   close?(): Promise<void> | void
   getQuote?(call: ProviderCall): Promise<ProviderQuote>
   getBars?(call: BarsCall): Promise<readonly ProviderBar[]>

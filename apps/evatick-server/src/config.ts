@@ -15,6 +15,7 @@ export interface EvaDaemonConfiguration {
   storage: {
     catalogPath: string
     historyPath: string
+    dataSourcePreferencesPath: string
   }
   admin: {
     username: string
@@ -75,7 +76,7 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
     'healthCheckIntervalSeconds', 'healthCheckTimeoutMs',
   ], 'configuration.server')
   const storage = objectAt(root.storage, 'configuration.storage')
-  rejectUnknownKeys(storage, ['catalogPath', 'historyPath'], 'configuration.storage')
+  rejectUnknownKeys(storage, ['catalogPath', 'historyPath', 'dataSourcePreferencesPath'], 'configuration.storage')
   const admin = objectAt(root.admin, 'configuration.admin')
   rejectUnknownKeys(admin, ['username', 'initialPassword', 'credentialsPath', 'apiKeysPath'], 'configuration.admin')
   const providers = objectAt(root.providers, 'configuration.providers')
@@ -110,6 +111,11 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
     storage: {
       catalogPath: configuredPath(storage.catalogPath, 'configuration.storage.catalogPath', configurationDirectory),
       historyPath: configuredPath(storage.historyPath, 'configuration.storage.historyPath', configurationDirectory),
+      dataSourcePreferencesPath: configuredPath(
+        storage.dataSourcePreferencesPath ?? './data/data-source-preferences.json',
+        'configuration.storage.dataSourcePreferencesPath',
+        configurationDirectory,
+      ),
     },
     admin: {
       username,
