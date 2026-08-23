@@ -1280,7 +1280,7 @@ export class DataSyncManager {
         high DOUBLE NOT NULL,
         low DOUBLE NOT NULL,
         close DOUBLE NOT NULL,
-        volume BIGINT,
+        volume DOUBLE,
         turnover DOUBLE,
         adjustment VARCHAR NOT NULL,
         provider VARCHAR NOT NULL,
@@ -1298,7 +1298,7 @@ export class DataSyncManager {
         high DOUBLE NOT NULL,
         low DOUBLE NOT NULL,
         close DOUBLE NOT NULL,
-        volume BIGINT,
+        volume DOUBLE,
         turnover DOUBLE,
         adjustment VARCHAR NOT NULL,
         complete BOOLEAN NOT NULL,
@@ -1405,6 +1405,17 @@ export class DataSyncManager {
         fetched_at VARCHAR
       );
     `)
+    const volumeColumns = await this.db.runAndReadAll(`
+      SELECT table_name, data_type
+      FROM information_schema.columns
+      WHERE table_name IN ('daily_bars', 'minute_bars') AND column_name = 'volume'
+    `)
+    for (const row of volumeColumns.getRowObjectsJson()) {
+      if (row.data_type === 'DOUBLE') continue
+      const table = String(row.table_name)
+      if (table !== 'daily_bars' && table !== 'minute_bars') continue
+      await this.db.run(`ALTER TABLE ${table} ALTER COLUMN volume SET DATA TYPE DOUBLE`)
+    }
     await this.db.run(`
       UPDATE sync_runs
       SET status = 'cancelled', finished_at = current_timestamp,
@@ -1760,7 +1771,7 @@ export class DataSyncManager {
       SELECT
         instrument_id, instrument_type, trading_date::DATE,
         open::DOUBLE, high::DOUBLE, low::DOUBLE, close::DOUBLE,
-        volume::BIGINT, turnover::DOUBLE, adjustment, provider, upstream,
+        volume::DOUBLE, turnover::DOUBLE, adjustment, provider, upstream,
         fetched_at::TIMESTAMP
       FROM staged_daily_bars
       ON CONFLICT (instrument_id, trading_date, adjustment) DO UPDATE SET
@@ -1818,7 +1829,7 @@ export class DataSyncManager {
         instrument_id, instrument_type, trading_date::DATE,
         period_start, period_end,
         open::DOUBLE, high::DOUBLE, low::DOUBLE, close::DOUBLE,
-        volume::BIGINT, turnover::DOUBLE, adjustment, complete::BOOLEAN,
+        volume::DOUBLE, turnover::DOUBLE, adjustment, complete::BOOLEAN,
         provider, upstream, fetched_at::TIMESTAMP
       FROM staged_minute_bars
       ON CONFLICT (instrument_id, period_start, adjustment) DO UPDATE SET

@@ -121,7 +121,7 @@ describe('exchange-scoped crypto market data', () => {
           periodStart: '2026-08-21T00:00:00.000Z',
           periodEnd: '2026-08-22T00:00:00.000Z', currency: 'USDT',
           open: '60000', high: '62000', low: '59000', close: '61000',
-          volume: 100, turnover: '6100000', adjustment: 'none', complete: true,
+          volume: 100.125, turnover: '6100000', adjustment: 'none', complete: true,
         }]
       },
       async getQuote() {
@@ -158,7 +158,7 @@ describe('exchange-scoped crypto market data', () => {
       expect(bars).toMatchObject({
         data: [{
           currency: 'USDT', period_start: '2026-08-21T00:00:00.000Z',
-          period_end: '2026-08-22T00:00:00.000Z', close: '61000',
+          period_end: '2026-08-22T00:00:00.000Z', close: '61000', volume: 100.125,
         }],
         meta: { sources: [{ provider: 'local-duckdb', upstream: 'local' }] },
       })
