@@ -40,6 +40,9 @@ export interface SyncedAdjustmentFactors {
 
 export interface DataSyncRun {
   run_id: string
+  trigger: 'manual' | 'scheduled' | 'retry'
+  schedule_id: number | null
+  retry_of_run_id: string | null
   status: 'running' | 'completed' | 'completed_with_errors' | 'cancelled' | 'failed'
   instrument_types: readonly InstrumentType[]
   interval: DataSyncInterval
@@ -61,13 +64,43 @@ export interface DataSyncRun {
   } | null
   started_at: string
   finished_at: string | null
-  failed_instrument_ids: readonly string[]
-  target_instrument_ids?: readonly string[]
-  retry_of_run_id?: string
   errors: readonly {
     instrument_id: string
     symbol: string
     message: string
+  }[]
+}
+
+export interface DataSyncRunItem {
+  instrument_id: string
+  symbol: string
+  name: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  bars_written: number
+  error: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface DataSyncGapReport {
+  interval: DataSyncInterval
+  start: string
+  end: string
+  instrument_types: readonly InstrumentType[]
+  checked: number
+  complete: number
+  missing: number
+  items: readonly {
+    instrument_id: string
+    instrument_type: InstrumentType
+    symbol: string
+    name: string
+    issue: 'no_data' | 'coverage_gap' | 'minute_incomplete'
+    actual_start: string | null
+    actual_end: string | null
+    missing_ranges: readonly { start: string; end: string }[]
+    incomplete_days: number
+    sample_incomplete_days: readonly { trading_date: string; records: number; missing_records: number }[]
   }[]
 }
 
@@ -298,6 +331,136 @@ export class DataSyncManager {
       last_run: this.lastRun,
       schedules: [...this.schedules.values()].sort((left, right) =>
         (left.next_run_at ?? '').localeCompare(right.next_run_at ?? '')),
+    }
+  }
+
+  async listRuns(limit = 30): Promise<readonly DataSyncRun[]> {
+    await this.ready
+    const reader = await this.db.runAndReadAll(`
+      SELECT status, payload::VARCHAR AS payload, finished_at::VARCHAR AS finished_at
+      FROM sync_runs ORDER BY started_at DESC LIMIT $limit
+    `, { limit })
+    return reader.getRowObjectsJson().flatMap((row) => {
+      if (typeof row.payload !== 'string') return []
+      const stored = JSON.parse(row.payload) as DataSyncRun
+      return [this.normalizeRun(stored, row.status, row.finished_at)]
+    })
+  }
+
+  async runItems(runId: string): Promise<readonly DataSyncRunItem[]> {
+    await this.ready
+    const reader = await this.db.runAndReadAll(`
+      SELECT instrument_id, symbol, name, status, bars_written, error,
+        started_at::VARCHAR AS started_at, finished_at::VARCHAR AS finished_at
+      FROM sync_run_items WHERE run_id = $run_id
+      ORDER BY coalesce(started_at, finished_at), symbol
+    `, { run_id: runId })
+    return reader.getRowObjectsJson().map((row) => ({
+      instrument_id: String(row.instrument_id), symbol: String(row.symbol), name: String(row.name),
+      status: row.status as DataSyncRunItem['status'], bars_written: Number(row.bars_written),
+      error: row.error === null ? null : String(row.error),
+      started_at: this.timestamp(row.started_at), finished_at: this.timestamp(row.finished_at),
+    }))
+  }
+
+  async retry(runId: string, instrumentId?: string, failedOnly = true): Promise<DataSyncRun> {
+    await this.ready
+    if (this.activeRun) throw new Error('DATA_SYNC_ALREADY_RUNNING')
+    const source = (await this.listRuns(10_000)).find((run) => run.run_id === runId)
+    if (!source) throw new Error('DATA_SYNC_RUN_NOT_FOUND')
+    const catalog = await this.dependencies.loadInstruments()
+    const items = await this.runItems(runId)
+    const targetItems = items.filter((item) =>
+      (!instrumentId || item.instrument_id === instrumentId) && (!failedOnly || item.status === 'failed'))
+    const fallbackIds = failedOnly
+      ? source.errors.filter((item) => !instrumentId || item.instrument_id === instrumentId)
+        .map((item) => item.instrument_id)
+      : []
+    const targetIds = new Set(targetItems.length ? targetItems.map((item) => item.instrument_id) : fallbackIds)
+    const instruments = targetIds.size
+      ? catalog.filter((instrument) => targetIds.has(instrument.instrumentId))
+      : failedOnly
+        ? []
+        : catalog.filter((instrument) =>
+          source.instrument_types.includes(instrument.type) && instrument.capabilities.includes('bars'))
+          .slice(0, source.limit ?? undefined)
+    if (!instruments.length) throw new Error(failedOnly ? 'DATA_SYNC_NO_FAILED_ITEMS' : 'DATA_SYNC_NO_ITEMS')
+    if (targetIds.size && instruments.length !== targetIds.size) throw new Error('DATA_SYNC_CATALOG_CHANGED')
+    return this.createRun({
+      instrumentTypes: source.instrument_types, interval: source.interval,
+      start: source.start, end: source.end, adjustment: source.adjustment,
+      delayMs: source.delay_ms, lookbackDays: source.lookback_days,
+    }, instruments, { trigger: 'retry', retryOfRunId: source.run_id })
+  }
+
+  async detectGaps(request: {
+    interval: DataSyncInterval
+    start: string
+    end: string
+    instrumentTypes: readonly InstrumentType[]
+    limit?: number
+  }): Promise<DataSyncGapReport> {
+    await this.ready
+    if (!DATE_PATTERN.test(request.start) || !DATE_PATTERN.test(request.end) || request.start > request.end) {
+      throw new Error('DATA_SYNC_INVALID_RANGE')
+    }
+    const catalog = (await this.dependencies.loadInstruments()).filter((instrument) =>
+      request.instrumentTypes.includes(instrument.type) && instrument.capabilities.includes('bars'))
+      .slice(0, request.limit)
+    const table = request.interval === '1m' ? 'minute_bars' : 'daily_bars'
+    const coverageTable = request.interval === '1m' ? 'minute_sync_coverage' : 'sync_coverage'
+    const reader = await this.db.runAndReadAll(`
+      SELECT instrument_id, min(trading_date)::VARCHAR AS actual_start,
+        max(trading_date)::VARCHAR AS actual_end
+      FROM ${table}
+      WHERE adjustment = 'none' AND trading_date BETWEEN $start::DATE AND $end::DATE
+      GROUP BY instrument_id
+    `, { start: request.start, end: request.end })
+    const ranges = new Map(reader.getRowObjectsJson().map((row) => [String(row.instrument_id), row]))
+    const coverageReader = await this.db.runAndReadAll(`
+      SELECT instrument_id, requested_start::VARCHAR AS requested_start,
+        requested_end::VARCHAR AS requested_end
+      FROM ${coverageTable} WHERE adjustment = 'none'
+    `)
+    const coverages = new Map(coverageReader.getRowObjectsJson().map((row) => [String(row.instrument_id), row]))
+    const minuteReader = request.interval === '1m' ? await this.db.runAndReadAll(`
+      SELECT instrument_id, trading_date::VARCHAR AS trading_date, count(*)::INTEGER AS records
+      FROM minute_bars
+      WHERE adjustment = 'none' AND trading_date BETWEEN $start::DATE AND $end::DATE
+      GROUP BY instrument_id, trading_date HAVING count(*) < 240
+      ORDER BY trading_date DESC
+    `, { start: request.start, end: request.end }) : null
+    const incomplete = new Map<string, { trading_date: string; records: number; missing_records: number }[]>()
+    for (const row of minuteReader?.getRowObjectsJson() ?? []) {
+      const id = String(row.instrument_id)
+      const days = incomplete.get(id) ?? []
+      days.push({ trading_date: String(row.trading_date), records: Number(row.records), missing_records: 240 - Number(row.records) })
+      incomplete.set(id, days)
+    }
+    const items: DataSyncGapReport['items'][number][] = []
+    for (const instrument of catalog) {
+      const range = ranges.get(instrument.instrumentId)
+      const actualStart = typeof range?.actual_start === 'string' ? range.actual_start : null
+      const actualEnd = typeof range?.actual_end === 'string' ? range.actual_end : null
+      const coverage = coverages.get(instrument.instrumentId)
+      const coveredStart = typeof coverage?.requested_start === 'string' ? coverage.requested_start : null
+      const coveredEnd = typeof coverage?.requested_end === 'string' ? coverage.requested_end : null
+      const missingRanges: { start: string; end: string }[] = []
+      if (coveredStart && coveredStart > request.start) missingRanges.push({ start: request.start, end: subtractDays(coveredStart, 1) })
+      if (coveredEnd && coveredEnd < request.end) missingRanges.push({ start: addDays(coveredEnd, 1), end: request.end })
+      const days = incomplete.get(instrument.instrumentId) ?? []
+      const issue = !coveredStart || !coveredEnd ? 'no_data' : missingRanges.length ? 'coverage_gap' : days.length ? 'minute_incomplete' : null
+      if (issue) items.push({
+        instrument_id: instrument.instrumentId, instrument_type: instrument.type,
+        symbol: instrument.symbol, name: instrument.name, issue,
+        actual_start: actualStart, actual_end: actualEnd, missing_ranges: missingRanges,
+        incomplete_days: days.length, sample_incomplete_days: days.slice(0, 5),
+      })
+    }
+    return {
+      interval: request.interval, start: request.start, end: request.end,
+      instrument_types: [...request.instrumentTypes], checked: catalog.length,
+      complete: catalog.length - items.length, missing: items.length, items,
     }
   }
 
@@ -645,7 +808,10 @@ export class DataSyncManager {
     }
   }
 
-  async start(request: DataSyncRequest): Promise<DataSyncRun> {
+  async start(
+    request: DataSyncRequest,
+    metadata: { trigger?: DataSyncRun['trigger']; scheduleId?: number } = {},
+  ): Promise<DataSyncRun> {
     await this.ready
     if (this.activeRun) throw new Error('DATA_SYNC_ALREADY_RUNNING')
     if (!request.instrumentTypes.length) throw new Error('DATA_SYNC_TYPES_REQUIRED')
@@ -656,8 +822,6 @@ export class DataSyncManager {
       throw new Error('DATA_SYNC_REQUIRES_RAW_BARS')
     }
     if (request.start > request.end) throw new Error('DATA_SYNC_INVALID_RANGE')
-    const interval = request.interval ?? '1d'
-
     const catalog = await this.dependencies.loadInstruments()
     const instruments = catalog
       .filter((instrument) =>
@@ -665,11 +829,24 @@ export class DataSyncManager {
         instrument.capabilities.includes('bars'),
       )
       .slice(0, request.limit)
+    return this.createRun(request, instruments, {
+      trigger: metadata.trigger ?? 'manual', scheduleId: metadata.scheduleId,
+    })
+  }
+
+  private async createRun(
+    request: DataSyncRequest,
+    instruments: readonly CatalogInstrument[],
+    metadata: { trigger: DataSyncRun['trigger']; scheduleId?: number; retryOfRunId?: string },
+  ): Promise<DataSyncRun> {
     const run: DataSyncRun = {
       run_id: randomUUID(),
+      trigger: metadata.trigger,
+      schedule_id: metadata.scheduleId ?? null,
+      retry_of_run_id: metadata.retryOfRunId ?? null,
       status: 'running',
       instrument_types: [...request.instrumentTypes],
-      interval,
+      interval: request.interval ?? '1d',
       start: request.start,
       end: request.end,
       adjustment: request.adjustment,
@@ -684,12 +861,12 @@ export class DataSyncManager {
       current_instrument: null,
       started_at: new Date().toISOString(),
       finished_at: null,
-      failed_instrument_ids: [],
       errors: [],
     }
     this.activeRun = run
     this.cancelled = false
     await this.persistRun(run)
+    await this.createRunItems(run.run_id, instruments)
     this.launch(run, instruments)
     return run
   }
@@ -708,88 +885,21 @@ export class DataSyncManager {
     }
 
     const catalog = await this.dependencies.loadInstruments()
-    const instruments = previous.target_instrument_ids
-      ? this.resolveInstruments(catalog, previous.target_instrument_ids)
-      : catalog
-        .filter((instrument) =>
-          previous.instrument_types.includes(instrument.type) &&
-          instrument.capabilities.includes('bars'),
-        )
-        .slice(0, previous.limit ?? undefined)
+    const instruments = catalog
+      .filter((instrument) =>
+        previous.instrument_types.includes(instrument.type) &&
+        instrument.capabilities.includes('bars'),
+      )
+      .slice(0, previous.limit ?? undefined)
     if (instruments.length !== previous.total) {
       throw new Error('DATA_SYNC_CATALOG_CHANGED')
     }
 
-    const run: DataSyncRun = {
-      ...previous,
-      interval: previous.interval ?? '1d',
-      run_id: randomUUID(),
-      status: 'running',
-      current_instrument: null,
-      started_at: new Date().toISOString(),
-      finished_at: null,
-    }
-    this.activeRun = run
-    this.cancelled = false
-    await this.persistRun(run)
-    this.launch(run, instruments.slice(previous.completed))
-    return run
-  }
-
-  async retryFailures(): Promise<DataSyncRun> {
-    await this.ready
-    if (this.activeRun) throw new Error('DATA_SYNC_ALREADY_RUNNING')
-
-    const previous = this.lastRun
-    const failedInstrumentIds = previous?.failed_instrument_ids?.length
-      ? [...new Set(previous.failed_instrument_ids)]
-      : [...new Set(previous?.errors
-        .map((error) => error.instrument_id)
-        .filter((instrumentId) => instrumentId) ?? [])]
-    if (!previous || failedInstrumentIds.length === 0) {
-      throw new Error('DATA_SYNC_NO_FAILED_INSTRUMENTS')
-    }
-
-    const catalog = await this.dependencies.loadInstruments()
-    const instruments = this.resolveInstruments(catalog, failedInstrumentIds)
-    if (instruments.length !== failedInstrumentIds.length) {
-      throw new Error('DATA_SYNC_CATALOG_CHANGED')
-    }
-
-    const run: DataSyncRun = {
-      ...previous,
-      run_id: randomUUID(),
-      status: 'running',
-      limit: instruments.length,
-      total: instruments.length,
-      completed: 0,
-      succeeded: 0,
-      failed: 0,
-      bars_written: 0,
-      current_instrument: null,
-      started_at: new Date().toISOString(),
-      finished_at: null,
-      failed_instrument_ids: [],
-      target_instrument_ids: failedInstrumentIds,
-      retry_of_run_id: previous.run_id,
-      errors: [],
-    }
-    this.activeRun = run
-    this.cancelled = false
-    await this.persistRun(run)
-    this.launch(run, instruments)
-    return run
-  }
-
-  private resolveInstruments(
-    catalog: readonly CatalogInstrument[],
-    instrumentIds: readonly string[],
-  ): CatalogInstrument[] {
-    const byId = new Map(catalog.map((instrument) => [instrument.instrumentId, instrument]))
-    return instrumentIds
-      .map((instrumentId) => byId.get(instrumentId))
-      .filter((instrument): instrument is CatalogInstrument =>
-        instrument !== undefined && instrument.capabilities.includes('bars'))
+    return this.createRun({
+      instrumentTypes: previous.instrument_types, interval: previous.interval ?? '1d',
+      start: previous.start, end: previous.end, adjustment: previous.adjustment,
+      delayMs: previous.delay_ms, lookbackDays: previous.lookback_days,
+    }, instruments.slice(previous.completed), { trigger: 'retry', retryOfRunId: previous.run_id })
   }
 
   private launch(
@@ -814,6 +924,23 @@ export class DataSyncManager {
         this.execution = null
         void this.runNextScheduledTask()
       })
+  }
+
+  private normalizeRun(stored: DataSyncRun, status?: unknown, finishedAt?: unknown): DataSyncRun {
+    return {
+      ...stored,
+      trigger: stored.trigger ?? 'manual',
+      schedule_id: stored.schedule_id ?? null,
+      retry_of_run_id: stored.retry_of_run_id ?? null,
+      interval: stored.interval ?? '1d',
+      lookback_days: stored.lookback_days ?? 10,
+      status: typeof status === 'string' ? status as DataSyncRun['status'] : stored.status,
+      finished_at: this.timestamp(finishedAt) ?? stored.finished_at,
+    }
+  }
+
+  private timestamp(value: unknown): string | null {
+    return typeof value === 'string' ? value.replace(' ', 'T') + (value.includes('Z') ? '' : 'Z') : null
   }
 
   async readBars(request: {
@@ -1171,6 +1298,18 @@ export class DataSyncManager {
         started_at TIMESTAMP NOT NULL,
         finished_at TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS sync_run_items (
+        run_id VARCHAR NOT NULL,
+        instrument_id VARCHAR NOT NULL,
+        symbol VARCHAR NOT NULL,
+        name VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        bars_written BIGINT NOT NULL,
+        error VARCHAR,
+        started_at TIMESTAMP,
+        finished_at TIMESTAMP,
+        PRIMARY KEY (run_id, instrument_id)
+      );
       CREATE TABLE IF NOT EXISTS sync_coverage (
         instrument_id VARCHAR NOT NULL,
         adjustment VARCHAR NOT NULL,
@@ -1249,18 +1388,7 @@ export class DataSyncManager {
     const latestRow = latest.getRowObjectsJson()[0]
     if (typeof latestRow?.payload === 'string') {
       const storedRun = JSON.parse(latestRow.payload) as DataSyncRun
-      this.lastRun = {
-        ...storedRun,
-        interval: storedRun.interval ?? '1d',
-        lookback_days: storedRun.lookback_days ?? 10,
-        failed_instrument_ids: storedRun.failed_instrument_ids ?? storedRun.errors
-          .map((error) => error.instrument_id)
-          .filter((instrumentId) => instrumentId),
-        status: latestRow.status as DataSyncRun['status'],
-        finished_at: typeof latestRow.finished_at === 'string'
-          ? latestRow.finished_at.replace(' ', 'T') + 'Z'
-          : null,
-      }
+      this.lastRun = this.normalizeRun(storedRun, latestRow.status, latestRow.finished_at)
     }
     const scheduleReader = await this.db.runAndReadAll(`
       SELECT id, payload::VARCHAR AS payload FROM sync_schedule ORDER BY id
@@ -1333,7 +1461,7 @@ export class DataSyncManager {
           adjustment: schedule.adjustment,
           delayMs: schedule.delay_ms,
           lookbackDays: schedule.lookback_days,
-        })
+        }, { trigger: 'scheduled', scheduleId })
         return
       } catch (error) {
         process.stderr.write(`[data-sync-schedule] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
@@ -1361,6 +1489,9 @@ export class DataSyncManager {
         symbol: instrument.symbol,
         name: instrument.name,
       }
+      await this.updateRunItem(run.run_id, instrument.instrumentId, {
+        status: 'running', startedAt: new Date().toISOString(),
+      })
       try {
         await this.upsertInstrument(instrument)
         const [storedRange, coveredStart] = await Promise.all([
@@ -1394,14 +1525,20 @@ export class DataSyncManager {
         )
         run.succeeded += 1
         run.bars_written += result.bars.length
+        await this.updateRunItem(run.run_id, instrument.instrumentId, {
+          status: 'completed', barsWritten: result.bars.length, finishedAt: new Date().toISOString(),
+        })
       } catch (error) {
         run.failed += 1
-        run.failed_instrument_ids = [...run.failed_instrument_ids, instrument.instrumentId]
+        const message = error instanceof Error ? error.message : String(error)
+        await this.updateRunItem(run.run_id, instrument.instrumentId, {
+          status: 'failed', error: message, finishedAt: new Date().toISOString(),
+        })
         if (run.errors.length < MAX_ERRORS) {
           run.errors = [...run.errors, {
             instrument_id: instrument.instrumentId,
             symbol: instrument.symbol,
-            message: error instanceof Error ? error.message : String(error),
+            message,
           }]
         }
       }
@@ -1422,6 +1559,12 @@ export class DataSyncManager {
         ? 'completed_with_errors'
         : 'completed'
     run.finished_at = new Date().toISOString()
+    if (this.cancelled) {
+      await this.db.run(`
+        UPDATE sync_run_items SET status = 'cancelled', finished_at = current_timestamp
+        WHERE run_id = $run_id AND status = 'pending'
+      `, { run_id: run.run_id })
+    }
     await this.persistRun(run)
     this.lastRun = run
     this.activeRun = null
@@ -1740,6 +1883,46 @@ export class DataSyncManager {
       payload: JSON.stringify(run),
       started_at: run.started_at,
       finished_at: run.finished_at ?? '',
+    })
+  }
+
+  private async createRunItems(
+    runId: string,
+    instruments: readonly CatalogInstrument[],
+  ): Promise<void> {
+    for (const instrument of instruments) {
+      await this.db.run(`
+        INSERT INTO sync_run_items VALUES (
+          $run_id, $instrument_id, $symbol, $name, 'pending', 0, null, null, null
+        )
+      `, {
+        run_id: runId, instrument_id: instrument.instrumentId,
+        symbol: instrument.symbol, name: instrument.name,
+      })
+    }
+  }
+
+  private async updateRunItem(
+    runId: string,
+    instrumentId: string,
+    update: {
+      status: DataSyncRunItem['status']
+      barsWritten?: number
+      error?: string
+      startedAt?: string
+      finishedAt?: string
+    },
+  ): Promise<void> {
+    await this.db.run(`
+      UPDATE sync_run_items SET status = $status,
+        bars_written = coalesce($bars_written, bars_written), error = $error,
+        started_at = coalesce($started_at::TIMESTAMP, started_at),
+        finished_at = nullif($finished_at, '')::TIMESTAMP
+      WHERE run_id = $run_id AND instrument_id = $instrument_id
+    `, {
+      run_id: runId, instrument_id: instrumentId, status: update.status,
+      bars_written: update.barsWritten ?? null, error: update.error ?? null,
+      started_at: update.startedAt ?? null, finished_at: update.finishedAt ?? '',
     })
   }
 }

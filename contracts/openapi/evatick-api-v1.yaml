@@ -83,6 +83,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/DataSyncStatusResponse'
   /v1/data-sync/runs:
+    get:
+      operationId: listDataSyncRuns
+      summary: List independent synchronization run records
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 30
+      responses:
+        '200':
+          description: Synchronization runs ordered newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema, data]
+                properties:
+                  schema:
+                    const: eva.data-sync-run-list.v1
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DataSyncRun'
     post:
       operationId: startDataSyncRun
       summary: Start a background daily or one-minute bar synchronization run
@@ -105,6 +131,112 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/data-sync/runs/{runId}/items:
+    get:
+      operationId: listDataSyncRunItems
+      summary: List per-instrument results for a synchronization run
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Per-instrument synchronization results.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema, data]
+                properties:
+                  schema:
+                    const: eva.data-sync-run-item-list.v1
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DataSyncRunItem'
+  /v1/data-sync/runs/{runId}/retry:
+    post:
+      operationId: retryDataSyncRun
+      summary: Retry all or one failed instrument from a synchronization run
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                instrument_id:
+                  type: string
+                failed_only:
+                  type: boolean
+                  default: true
+      responses:
+        '202':
+          description: An independent retry run was accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSyncRunResponse'
+        default:
+          description: Run not found, no matching failures, or another run is active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data-sync/gaps:
+    get:
+      operationId: detectDataSyncGaps
+      summary: Detect instruments with missing local historical data
+      parameters:
+        - in: query
+          name: interval
+          schema:
+            type: string
+            enum: [1m, 1d]
+        - in: query
+          name: start
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: end
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: instrument_types
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20000
+      responses:
+        '200':
+          description: Coverage-gap summary and affected instruments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema, data]
+                properties:
+                  schema:
+                    const: eva.data-sync-gap-report.v1
+                  data:
+                    type: object
+                    additionalProperties: true
   /v1/data-sync/schedules:
     post:
       operationId: createDataSyncSchedule
@@ -178,23 +310,6 @@ paths:
                 $ref: '#/components/schemas/DataSyncRunResponse'
         default:
           description: No resumable run exists, the catalog changed, or another run is active.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
-  /v1/data-sync/retry-failures:
-    post:
-      operationId: retryFailedDataSyncInstruments
-      summary: Start a new run containing only failed instruments from the latest run
-      responses:
-        '202':
-          description: Failed instruments retry accepted.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DataSyncRunResponse'
-        default:
-          description: No failed instruments exist, the catalog changed, or another run is active.
           content:
             application/problem+json:
               schema:
@@ -587,11 +702,23 @@ components:
     DataSyncRun:
       type: object
       additionalProperties: true
-      required: [run_id, status, interval, total, completed, succeeded, failed, bars_written]
+      required: [run_id, trigger, schedule_id, retry_of_run_id, status, interval, total, completed, succeeded, failed, bars_written]
       properties:
         run_id:
           type: string
           format: uuid
+        trigger:
+          type: string
+          enum: [manual, scheduled, retry]
+        schedule_id:
+          oneOf:
+            - type: 'null'
+            - type: integer
+        retry_of_run_id:
+          oneOf:
+            - type: 'null'
+            - type: string
+              format: uuid
         status:
           type: string
           enum: [running, completed, completed_with_errors, cancelled, failed]
@@ -613,17 +740,37 @@ components:
         bars_written:
           type: integer
           minimum: 0
-        failed_instrument_ids:
-          type: array
-          items:
-            type: string
-        target_instrument_ids:
-          type: array
-          items:
-            type: string
-        retry_of_run_id:
+    DataSyncRunItem:
+      type: object
+      additionalProperties: false
+      required: [instrument_id, symbol, name, status, bars_written, error, started_at, finished_at]
+      properties:
+        instrument_id:
           type: string
-          format: uuid
+        symbol:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+        bars_written:
+          type: integer
+          minimum: 0
+        error:
+          oneOf:
+            - type: 'null'
+            - type: string
+        started_at:
+          oneOf:
+            - type: 'null'
+            - type: string
+              format: date-time
+        finished_at:
+          oneOf:
+            - type: 'null'
+            - type: string
+              format: date-time
     DataSyncRunResponse:
       type: object
       additionalProperties: false

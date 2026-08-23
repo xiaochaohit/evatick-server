@@ -530,6 +530,99 @@ export class EvaHttpService extends Service {
       }
     })
 
+    this.app.get<{
+      Querystring: { limit?: string }
+    }>('/v1/data-sync/runs', async (request, reply) => {
+      const limit = request.query.limit === undefined ? 30 : Number(request.query.limit)
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-data-sync-run-query',
+          title: 'Invalid data sync run query', status: 400,
+          code: 'INVALID_DATA_SYNC_RUN_QUERY', detail: 'limit must be between 1 and 200.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      reply.header('cache-control', 'no-store')
+      return { schema: 'eva.data-sync-run-list.v1', data: await this.dataSyncManager.listRuns(limit) }
+    })
+
+    this.app.get<{
+      Params: { runId: string }
+    }>('/v1/data-sync/runs/:runId/items', async (request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return {
+        schema: 'eva.data-sync-run-item-list.v1',
+        data: await this.dataSyncManager.runItems(request.params.runId),
+      }
+    })
+
+    this.app.post<{
+      Params: { runId: string }
+      Body: { instrument_id?: string; failed_only?: boolean }
+    }>('/v1/data-sync/runs/:runId/retry', async (request, reply) => {
+      try {
+        if (request.body?.failed_only !== undefined && typeof request.body.failed_only !== 'boolean') {
+          throw new Error('DATA_SYNC_INVALID_RETRY')
+        }
+        const run = await this.dataSyncManager.retry(
+          request.params.runId, request.body?.instrument_id, request.body?.failed_only ?? true,
+        )
+        return reply.code(202).send({ schema: 'eva.data-sync-run.v1', data: run })
+      } catch (error) {
+        const code = error instanceof Error ? error.message : 'DATA_SYNC_RETRY_FAILED'
+        const notFound = code === 'DATA_SYNC_RUN_NOT_FOUND'
+        const conflict = code === 'DATA_SYNC_ALREADY_RUNNING'
+        return reply.code(notFound ? 404 : conflict ? 409 : 400).type('application/problem+json').send({
+          type: `urn:eva:problem:${code.toLowerCase().replaceAll('_', '-')}`,
+          title: 'Data sync retry could not start', status: notFound ? 404 : conflict ? 409 : 400,
+          code, detail: code === 'DATA_SYNC_NO_FAILED_ITEMS'
+            ? 'This run has no matching failed items.'
+            : code === 'DATA_SYNC_NO_ITEMS' ? 'This run has no instruments to retry.'
+            : code === 'DATA_SYNC_CATALOG_CHANGED'
+              ? 'One or more failed instruments no longer exist in the catalog.'
+              : notFound ? 'The synchronization run does not exist.'
+                : conflict ? 'Only one data sync run can execute at a time.' : 'The retry request is invalid.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+    })
+
+    this.app.get<{
+      Querystring: { interval?: string; start?: string; end?: string; instrument_types?: string; limit?: string }
+    }>('/v1/data-sync/gaps', async (request, reply) => {
+      const interval = request.query.interval ?? '1d'
+      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
+      const start = request.query.start ?? today
+      const end = request.query.end ?? today
+      const instrumentTypes = (request.query.instrument_types ?? 'equity,index').split(',')
+      const limit = request.query.limit === undefined ? undefined : Number(request.query.limit)
+      if ((interval !== '1m' && interval !== '1d') ||
+        instrumentTypes.length === 0 || instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
+        (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20_000))) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-data-sync-gap-query',
+          title: 'Invalid data sync gap query', status: 400,
+          code: 'INVALID_DATA_SYNC_GAP_QUERY', detail: 'interval, instrument_types, or limit is invalid.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      try {
+        return {
+          schema: 'eva.data-sync-gap-report.v1',
+          data: await this.dataSyncManager.detectGaps({
+            interval, start, end, instrumentTypes: instrumentTypes as InstrumentType[], limit,
+          }),
+        }
+      } catch {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-data-sync-gap-query',
+          title: 'Invalid data sync gap query', status: 400,
+          code: 'INVALID_DATA_SYNC_GAP_QUERY', detail: 'start and end must form a valid date range.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+    })
+
     this.app.post<{
       Body: {
         instrument_types?: InstrumentType[]
