@@ -3,9 +3,11 @@ set -eu
 
 daemon_bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository_root=$(dirname "$daemon_bin_dir")
+server_root="$repository_root/apps/evatick-server"
 
 if [ "${1:-}" = "--" ]; then
     shift
 fi
 
-exec pnpm --dir "$repository_root" --filter @evatick/server start "$@"
+cd "$server_root"
+exec "$repository_root/node_modules/.bin/tsx" src/main.ts "$@"
