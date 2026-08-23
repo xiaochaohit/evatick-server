@@ -6,6 +6,7 @@ import io
 import json
 import math
 import os
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -311,13 +312,16 @@ def _future_contracts(akshare: Any, source: str) -> list[dict[str, Any]]:
         symbol = record.get("合约代码", record.get("合约"))
         if symbol is None or not str(symbol).strip():
             continue
+        normalized_symbol = str(symbol).strip()
+        if source == "cffex" and re.search(r"-[CP]-\d+$", normalized_symbol, re.I):
+            continue
         variety = record.get(
             "品种",
             record.get("品种名称", record.get("产品名称")),
         )
         normalized.append({
             **record,
-            "symbol": str(symbol).strip(),
+            "symbol": normalized_symbol,
             "variety": None if variety is None else str(variety).strip(),
             "venue": venue,
         })

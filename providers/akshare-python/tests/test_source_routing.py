@@ -317,6 +317,8 @@ class SourceRoutingTest(unittest.TestCase):
         fake_akshare = SimpleNamespace(
             futures_contract_info_cffex=lambda **_kwargs: [
                 {"合约代码": "IF2609", "品种": "IF"},
+                {"合约代码": "HO2608-C-2500", "品种": "HO"},
+                {"合约代码": "MO2608-P-4000", "品种": "MO"},
             ],
             futures_contract_info_shfe=lambda **_kwargs: [
                 {"合约代码": "cu2609"},
