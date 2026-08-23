@@ -338,6 +338,19 @@ def _list_futures(akshare: Any) -> dict[str, Any]:
             errors.append(error)
     if not records:
         raise SourcesExhausted(errors)
+    ine_symbols = {
+        str(record["symbol"]).upper()
+        for record in records
+        if record.get("venue") == "INE"
+    }
+    records = [
+        record
+        for record in records
+        if not (
+            record.get("venue") == "SHFE"
+            and str(record["symbol"]).upper() in ine_symbols
+        )
+    ]
     return {"data": records, "source": "exchange"}
 
 

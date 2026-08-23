@@ -322,6 +322,7 @@ class SourceRoutingTest(unittest.TestCase):
             ],
             futures_contract_info_shfe=lambda **_kwargs: [
                 {"合约代码": "cu2609"},
+                {"合约代码": "sc2609"},
             ],
             futures_contract_info_ine=lambda **_kwargs: [
                 {"合约代码": "sc2609", "品种名称": "原油"},
