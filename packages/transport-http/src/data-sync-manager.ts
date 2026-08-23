@@ -17,6 +17,7 @@ export type DataSyncInterval = Extract<BarInterval, '1m' | '1d'>
 export interface DataSyncRequest {
   interval?: DataSyncInterval
   instrumentTypes: readonly InstrumentType[]
+  instrumentIds?: readonly string[]
   start: string
   end: string
   adjustment: PriceAdjustment
@@ -49,6 +50,7 @@ export interface DataSyncRun {
   remaining_failed: number
   status: 'running' | 'completed' | 'completed_with_errors' | 'cancelled' | 'failed'
   instrument_types: readonly InstrumentType[]
+  instrument_ids: readonly string[] | null
   interval: DataSyncInterval
   start: string
   end: string
@@ -111,6 +113,7 @@ export interface DataSyncSchedule {
   time: string
   skip_weekends: boolean
   instrument_types: readonly InstrumentType[]
+  instrument_ids: readonly string[] | null
   lookback_days: number
   adjustment: PriceAdjustment
   delay_ms: number
@@ -176,6 +179,18 @@ export interface LocalCoverageSummary {
   records: number
   sources: readonly string[]
   last_fetched_at: string | null
+}
+
+export interface SyncInstrumentSummary {
+  instrument_id: string
+  instrument_type: InstrumentType
+  symbol: string
+  name: string
+  venue: string | null
+  daily_records: number
+  minute_records: number
+  minute_first_trading_date: string | null
+  minute_last_trading_date: string | null
 }
 
 interface DataSyncDependencies {
@@ -409,6 +424,15 @@ export class DataSyncManager {
     schedule: Omit<DataSyncSchedule, 'schedule_id' | 'next_run_at' | 'last_triggered_at'>,
   ): Promise<DataSyncSchedule> {
     await this.ready
+    if (schedule.instrument_ids?.length) {
+      const catalog = await this.dependencies.loadInstruments()
+      const eligibleIds = new Set(catalog.filter((instrument) =>
+        schedule.instrument_types.includes(instrument.type) && instrument.capabilities.includes('bars'))
+        .map((instrument) => instrument.instrumentId))
+      if (schedule.instrument_ids.some((instrumentId) => !eligibleIds.has(instrumentId))) {
+        throw new Error('DATA_SYNC_INSTRUMENTS_NOT_FOUND')
+      }
+    }
     const scheduleId = Math.max(0, ...this.schedules.keys()) + 1
     const created: DataSyncSchedule = {
       ...schedule,
@@ -555,6 +579,70 @@ export class DataSyncManager {
           minute_latest_close: row.minute_latest_close === null ? null : String(row.minute_latest_close),
           minute_requested_start: requestedStart,
           minute_requested_end: requestedEnd,
+        }
+      }),
+    }
+  }
+
+  async listSyncInstruments(request: {
+    query?: string
+    instrumentType: InstrumentType
+    limit: number
+    offset: number
+  }): Promise<{ total: number; items: readonly SyncInstrumentSummary[] }> {
+    await this.ready
+    const query = request.query?.replaceAll(/\s+/g, '').toLowerCase() ?? ''
+    const catalog = (await this.dependencies.loadInstruments())
+      .filter((instrument) =>
+        instrument.type === request.instrumentType &&
+        instrument.capabilities.includes('bars') &&
+        (!query || [instrument.symbol, instrument.name, instrument.instrumentId]
+          .some((value) => value.replaceAll(/\s+/g, '').toLowerCase().includes(query))))
+      .sort((left, right) => left.symbol.localeCompare(right.symbol))
+    const page = catalog.slice(request.offset, request.offset + request.limit)
+    if (page.length === 0) return { total: catalog.length, items: [] }
+    const parameters = Object.fromEntries(page.map((instrument, index) => [
+      `instrument_${index}`, instrument.instrumentId,
+    ]))
+    const placeholders = page.map((_instrument, index) => `$instrument_${index}`).join(', ')
+    const reader = await this.db.runAndReadAll(`
+      WITH daily AS (
+        SELECT instrument_id, count(*)::BIGINT AS records
+        FROM daily_bars
+        WHERE adjustment = 'none' AND instrument_id IN (${placeholders})
+        GROUP BY instrument_id
+      ), minute AS (
+        SELECT instrument_id, count(*)::BIGINT AS records,
+          min(trading_date)::VARCHAR AS first_date,
+          max(trading_date)::VARCHAR AS last_date
+        FROM minute_bars
+        WHERE adjustment = 'none' AND instrument_id IN (${placeholders})
+        GROUP BY instrument_id
+      )
+      SELECT coalesce(d.instrument_id, m.instrument_id) AS instrument_id,
+        coalesce(d.records, 0)::BIGINT AS daily_records,
+        coalesce(m.records, 0)::BIGINT AS minute_records,
+        m.first_date AS minute_first_date,
+        m.last_date AS minute_last_date
+      FROM daily d FULL OUTER JOIN minute m ON m.instrument_id = d.instrument_id
+    `, parameters)
+    const local = new Map(reader.getRowObjectsJson().map((row) => [String(row.instrument_id), row]))
+    return {
+      total: catalog.length,
+      items: page.map((instrument) => {
+        const row = local.get(instrument.instrumentId)
+        return {
+          instrument_id: instrument.instrumentId,
+          instrument_type: instrument.type,
+          symbol: instrument.symbol,
+          name: instrument.name,
+          venue: instrument.venue ?? null,
+          daily_records: Number(row?.daily_records ?? 0),
+          minute_records: Number(row?.minute_records ?? 0),
+          minute_first_trading_date: row?.minute_first_date === null || row?.minute_first_date === undefined
+            ? null : String(row.minute_first_date),
+          minute_last_trading_date: row?.minute_last_date === null || row?.minute_last_date === undefined
+            ? null : String(row.minute_last_date),
         }
       }),
     }
@@ -710,12 +798,21 @@ export class DataSyncManager {
     }
     if (request.start > request.end) throw new Error('DATA_SYNC_INVALID_RANGE')
     const catalog = await this.dependencies.loadInstruments()
-    const instruments = catalog
-      .filter((instrument) =>
-        request.instrumentTypes.includes(instrument.type) &&
-        instrument.capabilities.includes('bars'),
-      )
-      .slice(0, request.limit)
+    const eligible = catalog.filter((instrument) =>
+      request.instrumentTypes.includes(instrument.type) && instrument.capabilities.includes('bars'))
+    let instruments: readonly CatalogInstrument[]
+    if (request.instrumentIds?.length) {
+      const byId = new Map(eligible.map((instrument) => [instrument.instrumentId, instrument]))
+      instruments = request.instrumentIds.flatMap((instrumentId) => {
+        const instrument = byId.get(instrumentId)
+        return instrument ? [instrument] : []
+      })
+      if (instruments.length !== request.instrumentIds.length) {
+        throw new Error('DATA_SYNC_INSTRUMENTS_NOT_FOUND')
+      }
+    } else {
+      instruments = eligible.slice(0, request.limit)
+    }
     return this.createRun(request, instruments, {
       trigger: metadata.trigger ?? 'manual', scheduleId: metadata.scheduleId,
     })
@@ -737,6 +834,7 @@ export class DataSyncManager {
       remaining_failed: 0,
       status: 'running',
       instrument_types: [...request.instrumentTypes],
+      instrument_ids: request.instrumentIds?.length ? [...request.instrumentIds] : null,
       interval: request.interval ?? '1d',
       start: request.start,
       end: request.end,
@@ -787,18 +885,22 @@ export class DataSyncManager {
     }
 
     const catalog = await this.dependencies.loadInstruments()
-    const instruments = catalog
-      .filter((instrument) =>
-        previous.instrument_types.includes(instrument.type) &&
-        instrument.capabilities.includes('bars'),
-      )
-      .slice(0, previous.limit ?? undefined)
+    const eligible = catalog.filter((instrument) =>
+      previous.instrument_types.includes(instrument.type) && instrument.capabilities.includes('bars'))
+    const byId = new Map(eligible.map((instrument) => [instrument.instrumentId, instrument]))
+    const instruments = previous.instrument_ids?.length
+      ? previous.instrument_ids.flatMap((instrumentId) => {
+        const instrument = byId.get(instrumentId)
+        return instrument ? [instrument] : []
+      })
+      : eligible.slice(0, previous.limit ?? undefined)
     if (instruments.length !== previous.total) {
       throw new Error('DATA_SYNC_CATALOG_CHANGED')
     }
 
     return this.createRun({
       instrumentTypes: previous.instrument_types, interval: previous.interval ?? '1d',
+      ...(previous.instrument_ids ? { instrumentIds: previous.instrument_ids } : {}),
       start: previous.start, end: previous.end, adjustment: previous.adjustment,
       delayMs: previous.delay_ms, lookbackDays: previous.lookback_days,
     }, instruments.slice(previous.completed), { trigger: 'retry', retryOfRunId: previous.run_id })
@@ -839,6 +941,7 @@ export class DataSyncManager {
       retry_count: stored.retry_count ?? 0,
       latest_retry_run_id: stored.latest_retry_run_id ?? null,
       remaining_failed: stored.remaining_failed ?? stored.failed,
+      instrument_ids: stored.instrument_ids ?? null,
       interval: stored.interval ?? '1d',
       lookback_days: stored.lookback_days ?? 10,
       status: typeof status === 'string' ? status as DataSyncRun['status'] : stored.status,
@@ -1311,6 +1414,7 @@ export class DataSyncManager {
         enabled: true,
         time: '18:00',
         instrument_types: ['equity', 'index'],
+        instrument_ids: null,
         adjustment: 'none',
         delay_ms: 750,
         next_run_at: null,
@@ -1362,6 +1466,7 @@ export class DataSyncManager {
       try {
         await this.start({
           instrumentTypes: schedule.instrument_types,
+          ...(schedule.instrument_ids ? { instrumentIds: schedule.instrument_ids } : {}),
           interval: schedule.interval,
           start,
           end: today,

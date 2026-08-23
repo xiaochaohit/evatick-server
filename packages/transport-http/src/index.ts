@@ -549,6 +549,40 @@ export class EvaHttpService extends Service {
     })
 
     this.app.get<{
+      Querystring: { type?: string; q?: string; limit?: string; offset?: string }
+    }>('/v1/data-sync/instruments', async (request, reply) => {
+      const instrumentType = request.query.type
+      const limit = Number(request.query.limit ?? 50)
+      const offset = Number(request.query.offset ?? 0)
+      if (
+        (instrumentType !== 'equity' && instrumentType !== 'index') ||
+        (request.query.q?.length ?? 0) > 100 ||
+        !Number.isInteger(limit) || limit < 1 || limit > 100 ||
+        !Number.isInteger(offset) || offset < 0
+      ) {
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:invalid-data-sync-instrument-query',
+          title: 'Invalid data sync instrument query', status: 400,
+          code: 'INVALID_DATA_SYNC_INSTRUMENT_QUERY',
+          detail: 'type, q, limit, or offset is invalid.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
+      const result = await this.dataSyncManager.listSyncInstruments({
+        query: request.query.q,
+        instrumentType,
+        limit,
+        offset,
+      })
+      reply.header('cache-control', 'no-store')
+      return {
+        schema: 'eva.data-sync-instrument-list.v1',
+        data: result.items,
+        page: { total: result.total, limit, offset },
+      }
+    })
+
+    this.app.get<{
       Querystring: { limit?: string }
     }>('/v1/data-sync/runs', async (request, reply) => {
       const limit = request.query.limit === undefined ? 30 : Number(request.query.limit)
@@ -625,6 +659,7 @@ export class EvaHttpService extends Service {
     this.app.post<{
       Body: {
         instrument_types?: InstrumentType[]
+        instrument_ids?: string[]
         interval?: '1m' | '1d'
         start?: string
         end?: string
@@ -634,6 +669,7 @@ export class EvaHttpService extends Service {
       }
     }>('/v1/data-sync/runs', async (request, reply) => {
       const instrumentTypes = request.body?.instrument_types
+      const instrumentIds = request.body?.instrument_ids
       const interval = request.body?.interval ?? '1d'
       const start = request.body?.start
       const end = request.body?.end
@@ -642,7 +678,13 @@ export class EvaHttpService extends Service {
       const delayMs = request.body?.delay_ms ?? 0
       if (
         !Array.isArray(instrumentTypes) ||
+        instrumentTypes.length === 0 ||
         instrumentTypes.some((value) => value !== 'equity' && value !== 'index') ||
+        (instrumentIds !== undefined && (
+          !Array.isArray(instrumentIds) || instrumentIds.length === 0 || instrumentIds.length > 20_000 ||
+          instrumentIds.some((value) => typeof value !== 'string' || value.length === 0 || value.length > 200) ||
+          new Set(instrumentIds).size !== instrumentIds.length
+        )) ||
         (interval !== '1m' && interval !== '1d') ||
         typeof start !== 'string' ||
         typeof end !== 'string' ||
@@ -655,7 +697,7 @@ export class EvaHttpService extends Service {
           title: 'Invalid data sync request',
           status: 400,
           code: 'INVALID_DATA_SYNC_REQUEST',
-          detail: 'Synchronization stores raw bars only; instrument_types, interval, start, end, limit, or delay_ms is invalid.',
+          detail: 'Synchronization stores raw bars only; instrument_types, instrument_ids, interval, start, end, limit, or delay_ms is invalid.',
           retryable: false,
           request_id: `req_${randomUUID()}`,
         })
@@ -663,6 +705,7 @@ export class EvaHttpService extends Service {
       try {
         const run = await this.dataSyncManager.start({
           instrumentTypes,
+          ...(instrumentIds === undefined ? {} : { instrumentIds }),
           interval,
           start,
           end,
@@ -734,6 +777,7 @@ export class EvaHttpService extends Service {
         time?: string
         skip_weekends?: boolean
         instrument_types?: InstrumentType[]
+        instrument_ids?: string[]
         lookback_days?: number
         adjustment?: PriceAdjustment
         delay_ms?: number
@@ -744,6 +788,7 @@ export class EvaHttpService extends Service {
       const time = body?.time
       const skipWeekends = body?.skip_weekends ?? false
       const instrumentTypes = body?.instrument_types
+      const instrumentIds = body?.instrument_ids
       const lookbackDays = body?.lookback_days
       const adjustment = body?.adjustment
       const delayMs = body?.delay_ms
@@ -753,6 +798,11 @@ export class EvaHttpService extends Service {
         typeof skipWeekends !== 'boolean' ||
         !Array.isArray(instrumentTypes) || instrumentTypes.length === 0 ||
         instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
+        (instrumentIds !== undefined && (
+          !Array.isArray(instrumentIds) || instrumentIds.length === 0 || instrumentIds.length > 20_000 ||
+          instrumentIds.some((value) => typeof value !== 'string' || value.length === 0 || value.length > 200) ||
+          new Set(instrumentIds).size !== instrumentIds.length
+        )) ||
         !Number.isInteger(lookbackDays) || (lookbackDays ?? 0) < 1 || (lookbackDays ?? 0) > 90 ||
         adjustment !== 'none' ||
         !Number.isInteger(delayMs) || (delayMs ?? -1) < 0 || (delayMs ?? 0) > 10_000
@@ -761,16 +811,28 @@ export class EvaHttpService extends Service {
           type: 'urn:eva:problem:invalid-data-sync-schedule',
           title: 'Invalid data sync schedule', status: 400,
           code: 'INVALID_DATA_SYNC_SCHEDULE',
-          detail: 'interval, time, skip_weekends, instrument_types, lookback_days (1..90), adjustment, or delay_ms is invalid.',
+          detail: 'interval, time, skip_weekends, instrument_types, instrument_ids, lookback_days (1..90), adjustment, or delay_ms is invalid.',
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }
-      const schedule = await this.dataSyncManager.createSchedule({
-        enabled: true, interval, time, skip_weekends: skipWeekends,
-        instrument_types: instrumentTypes, lookback_days: lookbackDays!,
-        adjustment, delay_ms: delayMs!,
-      })
-      return reply.code(201).send({ schema: 'eva.data-sync-schedule.v1', data: schedule })
+      try {
+        const schedule = await this.dataSyncManager.createSchedule({
+          enabled: true, interval, time, skip_weekends: skipWeekends,
+          instrument_types: instrumentTypes, instrument_ids: instrumentIds ?? null,
+          lookback_days: lookbackDays!,
+          adjustment, delay_ms: delayMs!,
+        })
+        return reply.code(201).send({ schema: 'eva.data-sync-schedule.v1', data: schedule })
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'DATA_SYNC_INSTRUMENTS_NOT_FOUND') throw error
+        return reply.code(400).type('application/problem+json').send({
+          type: 'urn:eva:problem:data-sync-instruments-not-found',
+          title: 'Scheduled data sync instruments were not found', status: 400,
+          code: 'DATA_SYNC_INSTRUMENTS_NOT_FOUND',
+          detail: 'One or more selected instruments are not available for this category.',
+          retryable: false, request_id: `req_${randomUUID()}`,
+        })
+      }
     })
 
     this.app.delete<{

@@ -57,6 +57,75 @@ describe('local historical data synchronization', () => {
     }
   })
 
+  it('lists the searchable sync catalog and synchronizes only selected instruments', async () => {
+    const requestedSymbols: string[] = []
+    const provider: InstrumentProvider = {
+      id: 'selected-sync-fixture',
+      async listInstruments() {
+        return ['600000', '600001', '600002'].map((symbol) => ({
+          type: 'equity' as const, market: 'CN' as const, name: `股票${symbol}`, symbol,
+          providerSymbol: `sh${symbol}`, venue: 'XSHG', currency: 'CNY',
+          status: 'active' as const, capabilities: ['bars' as const],
+        }))
+      },
+      async getBars(call) {
+        requestedSymbols.push(call.providerSymbol)
+        return [{
+          source: 'fixture', interval: call.interval, tradingDate: '2026-08-21',
+          periodStart: '2026-08-21T00:00:00+08:00', periodEnd: '2026-08-21T23:59:59+08:00',
+          currency: 'CNY', open: '10', high: '11', low: '9', close: '10.5',
+          volume: 100, turnover: '1000', adjustment: call.adjustment, complete: true,
+        }]
+      },
+    }
+    const server = await createEvaTickServer({ healthCheckIntervalMs: 0 })
+    await server.mountProvider(provider)
+    try {
+      const catalog = await fetch(
+        `${server.url}/v1/data-sync/instruments?type=equity&q=600001&limit=50&offset=0`,
+      )
+      expect(catalog.status).toBe(200)
+      expect(await catalog.json()).toMatchObject({
+        schema: 'eva.data-sync-instrument-list.v1',
+        data: [{
+          instrument_id: 'cn:equity:XSHG:600001', symbol: '600001',
+          daily_records: 0, minute_records: 0,
+        }],
+        page: { total: 1, limit: 50, offset: 0 },
+      })
+
+      const selectedId = 'cn:equity:XSHG:600001'
+      const start = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['equity'], instrument_ids: [selectedId], interval: '1d',
+          start: '2026-08-21', end: '2026-08-21', adjustment: 'none',
+        }),
+      })
+      expect(start.status).toBe(202)
+      expect(await start.json()).toMatchObject({
+        data: { instrument_ids: [selectedId], total: 1 },
+      })
+      await waitForRun(server.url)
+      expect(requestedSymbols).toEqual(['sh600001'])
+
+      const schedule = await fetch(`${server.url}/v1/data-sync/schedules`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          interval: '1d', time: '18:00', skip_weekends: true,
+          instrument_types: ['equity'], instrument_ids: [selectedId],
+          lookback_days: 10, adjustment: 'none', delay_ms: 750,
+        }),
+      })
+      expect(schedule.status).toBe(201)
+      expect(await schedule.json()).toMatchObject({
+        data: { instrument_types: ['equity'], instrument_ids: [selectedId] },
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
   it('stores one-minute bars separately and serves covered requests from DuckDB', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'eva-minute-sync-'))
     const requestedIntervals: string[] = []
@@ -308,16 +377,17 @@ describe('local historical data synchronization', () => {
       expect(response.headers.get('content-type')).toContain('text/html')
       const page = await response.text()
       expect(page).toContain('历史数据同步')
-      expect(page).toContain('每日定时同步')
+      expect(page).toContain('股票</button><button class="category-tab" data-kind="index">指数')
+      expect(page).toContain('搜索标的')
+      expect(page).toContain('同步此标的')
+      expect(page).toContain('同步所选')
+      expect(page).toContain('全部同步')
       expect(page).toContain('回溯最近（天）')
-      expect(page).toContain('跳过周末')
-      expect(page).not.toContain('历史起始日')
-      expect(page).not.toContain('1 分钟 · 三个月验证')
+      expect(page).toContain('周一至周五')
       expect(page).toContain('<option value="1m" selected>1 分钟</option>')
-      expect(page).toContain("button.textContent='正在提交…'")
-      expect(page).toContain("button.textContent='同步中'")
-      expect(page).toContain('当前定时任务')
-      expect(page).toContain('添加定时任务')
+      expect(page).toContain('创建定时任务')
+      expect(page).toContain('下次执行')
+      expect(page).toContain('最近触发')
       expect(page).toContain('data-schedule-id')
       expect(page).toContain('aria-label="管理目录"')
       expect(page).toContain('href="/admin"')
