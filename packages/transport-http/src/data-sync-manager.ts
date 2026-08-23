@@ -1196,7 +1196,7 @@ export class DataSyncManager {
       { records: Number(row.records), hasMinute: Number(row.has_minute) === 1 },
     ] as const))
     const checkedAt = new Date().toISOString()
-    return (['equity', 'index'] as const).map((category) => ({
+    return (['equity', 'index', 'future'] as const).map((category) => ({
       provider_id: 'local-duckdb',
       source_id: 'local',
       source_name: '本地 DuckDB',
@@ -1413,7 +1413,7 @@ export class DataSyncManager {
         schedule_id: scheduleId,
         enabled: true,
         time: '18:00',
-        instrument_types: ['equity', 'index'],
+        instrument_types: ['equity', 'index', 'future'],
         instrument_ids: null,
         adjustment: 'none',
         delay_ms: 750,

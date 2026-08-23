@@ -7,6 +7,51 @@ import {
 } from '@evatick/server'
 
 describe('provider routing over HTTP', () => {
+  it('serves canonical mainland futures from an official exchange source', async () => {
+    const provider: InstrumentProvider = {
+      id: 'official-futures',
+      dataSources: [{
+        id: 'cffex', name: '中国金融期货交易所', categories: ['future'],
+        capabilities: { future: ['合约目录', '日线', '行情快照'] },
+      }],
+      async listInstruments() {
+        return [{
+          type: 'future', market: 'CN', name: '沪深300股指期货 IF2609',
+          symbol: 'IF2609', providerSymbol: 'CFFEX:IF2609', venue: 'CFFEX',
+          currency: 'CNY', status: 'active', capabilities: ['quote', 'bars'],
+        }]
+      },
+      async getBars() {
+        return [{
+          source: 'cffex', interval: '1d', tradingDate: '2026-08-21',
+          periodStart: '2026-08-21T09:30:00+08:00', periodEnd: '2026-08-21T15:15:00+08:00',
+          currency: 'CNY', open: '3910', high: '3940', low: '3900', close: '3930',
+          volume: 1500, turnover: '589500', adjustment: 'none', complete: true,
+        }]
+      },
+    }
+    const server = await createEvaTickServer()
+    await server.mountProvider(provider)
+    try {
+      const list = await fetch(`${server.url}/v1/instruments?instrument_type=future`)
+      expect(list.status).toBe(200)
+      expect(await list.json()).toMatchObject({ data: [{
+        instrument_id: 'cn:future:CFFEX:IF2609', instrument_type: 'future',
+        venue: 'CFFEX', capabilities: ['bars', 'quote'],
+      }] })
+      const bars = await fetch(
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:future:CFFEX:IF2609')}/bars?interval=1d`,
+      )
+      expect(bars.status).toBe(200)
+      expect(await bars.json()).toMatchObject({
+        data: [{ instrument_id: 'cn:future:CFFEX:IF2609', close: '3930' }],
+        meta: { sources: [{ provider: 'official-futures', upstream: 'cffex' }] },
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
   it('retries transient failures, falls back, and normalizes market data', async () => {
     let primaryQuoteAttempts = 0
     const primary: InstrumentProvider = {

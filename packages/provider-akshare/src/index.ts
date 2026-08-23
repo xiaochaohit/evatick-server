@@ -24,10 +24,11 @@ type JsonRecord = Record<string, unknown>
 export type AkshareRequest =
   | { operation: 'list_stocks' }
   | { operation: 'list_indices' }
-  | { operation: 'health'; source: string; instrumentType: 'equity' | 'index' }
+  | { operation: 'list_futures' }
+  | { operation: 'health'; source: string; instrumentType: 'equity' | 'index' | 'future' }
   | {
       operation: 'bars'
-      instrumentType: 'equity' | 'index'
+      instrumentType: 'equity' | 'index' | 'future'
       providerSymbol: string
       interval: '1m' | '5m' | '15m' | '30m' | '60m' | '1d'
       start?: string
@@ -37,7 +38,7 @@ export type AkshareRequest =
     }
   | {
       operation: 'quote'
-      instrumentType: 'equity' | 'index'
+      instrumentType: 'equity' | 'index' | 'future'
       providerSymbol: string
       sourceOrder?: readonly string[]
     }
@@ -212,6 +213,26 @@ export class AkshareProvider implements InstrumentProvider {
         index: ['日线', '行情快照'],
       },
     },
+    {
+      id: 'cffex', name: '中国金融期货交易所',
+      categories: ['future'],
+      capabilities: { future: ['合约目录', '日线', '行情快照'] },
+    },
+    {
+      id: 'shfe', name: '上海期货交易所',
+      categories: ['future'],
+      capabilities: { future: ['合约目录', '日线', '行情快照'] },
+    },
+    {
+      id: 'ine', name: '上海国际能源交易中心',
+      categories: ['future'],
+      capabilities: { future: ['合约目录', '日线', '行情快照'] },
+    },
+    {
+      id: 'czce', name: '郑州商品交易所',
+      categories: ['future'],
+      capabilities: { future: ['合约目录', '日线', '行情快照'] },
+    },
   ] as const
   private readonly run: AkshareRunner
   private instruments: readonly ProviderInstrument[] | undefined
@@ -252,9 +273,10 @@ export class AkshareProvider implements InstrumentProvider {
 
   async listInstruments(signal = new AbortController().signal): Promise<readonly ProviderInstrument[]> {
     if (this.instruments) return this.instruments
-    const [stockResult, indexResult] = await Promise.all([
+    const [stockResult, indexResult, futureResult] = await Promise.all([
       this.run({ operation: 'list_stocks' }, signal),
       this.run({ operation: 'list_indices' }, signal),
+      this.run({ operation: 'list_futures' }, signal),
     ])
     const stocks = stockResult.data
     const indices = indexResult.data
@@ -280,6 +302,17 @@ export class AkshareProvider implements InstrumentProvider {
           capabilities: ['quote', 'bars', 'constituents'],
         }]
       }),
+      ...futureResult.data.flatMap((record): ProviderInstrument[] => {
+        const symbol = asText(pick(record, 'symbol', '合约代码', '合约'))?.trim()
+        const venue = asText(pick(record, 'venue', '交易所'))?.toUpperCase()
+        if (!symbol || !venue || !['CFFEX', 'SHFE', 'INE', 'CZCE'].includes(venue)) return []
+        const variety = asText(pick(record, 'variety', '品种', '品种名称', '产品名称'))?.trim()
+        return [{
+          type: 'future', market: 'CN', name: variety ? `${variety} ${symbol}` : symbol,
+          symbol, providerSymbol: `${venue}:${symbol}`, venue,
+          currency: 'CNY', status: 'active', capabilities: ['quote', 'bars'],
+        }]
+      }),
     ]
     return this.instruments
   }
@@ -288,10 +321,15 @@ export class AkshareProvider implements InstrumentProvider {
     if (call.interval === '1w' || call.interval === '1mo') {
       throw new ProviderError('UNSUPPORTED_INTERVAL', 'AKShare provider supports minute and daily bars', false)
     }
-    const instrumentType = call.providerSymbol.startsWith('csi') ||
+    const instrumentType = call.providerSymbol.includes(':')
+      ? 'future'
+      : call.providerSymbol.startsWith('csi') ||
       call.providerSymbol.startsWith('sh000') || call.providerSymbol.startsWith('sz399')
       ? 'index'
       : 'equity'
+    if (instrumentType === 'future' && call.interval !== '1d') {
+      throw new ProviderError('UNSUPPORTED_INTERVAL', 'official futures sources support daily bars', false)
+    }
     const result = await this.run({
       operation: 'bars',
       instrumentType,
@@ -363,7 +401,9 @@ export class AkshareProvider implements InstrumentProvider {
   }
 
   async getQuote(call: { providerSymbol: string; signal: AbortSignal }): Promise<ProviderQuote> {
-    const instrumentType = call.providerSymbol.startsWith('csi') ||
+    const instrumentType = call.providerSymbol.includes(':')
+      ? 'future'
+      : call.providerSymbol.startsWith('csi') ||
       call.providerSymbol.startsWith('sh000') || call.providerSymbol.startsWith('sz399')
       ? 'index'
       : 'equity'

@@ -437,7 +437,7 @@ export class EvaHttpService extends Service {
       if (
         !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         !Number.isInteger(offset) || offset < 0 ||
-        (instrumentType !== undefined && instrumentType !== 'equity' && instrumentType !== 'index') ||
+        (instrumentType !== undefined && instrumentType !== 'equity' && instrumentType !== 'index' && instrumentType !== 'future') ||
         (interval !== undefined && interval !== '1m' && interval !== '1d') ||
         (request.query.q?.length ?? 0) > 100
       ) {
@@ -555,7 +555,7 @@ export class EvaHttpService extends Service {
       const limit = Number(request.query.limit ?? 50)
       const offset = Number(request.query.offset ?? 0)
       if (
-        (instrumentType !== 'equity' && instrumentType !== 'index') ||
+        (instrumentType !== 'equity' && instrumentType !== 'index' && instrumentType !== 'future') ||
         (request.query.q?.length ?? 0) > 100 ||
         !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         !Number.isInteger(offset) || offset < 0
@@ -679,7 +679,7 @@ export class EvaHttpService extends Service {
       if (
         !Array.isArray(instrumentTypes) ||
         instrumentTypes.length === 0 ||
-        instrumentTypes.some((value) => value !== 'equity' && value !== 'index') ||
+        instrumentTypes.some((value) => value !== 'equity' && value !== 'index' && value !== 'future') ||
         (instrumentIds !== undefined && (
           !Array.isArray(instrumentIds) || instrumentIds.length === 0 || instrumentIds.length > 20_000 ||
           instrumentIds.some((value) => typeof value !== 'string' || value.length === 0 || value.length > 200) ||
@@ -797,7 +797,7 @@ export class EvaHttpService extends Service {
         (interval !== '1m' && interval !== '1d') ||
         typeof skipWeekends !== 'boolean' ||
         !Array.isArray(instrumentTypes) || instrumentTypes.length === 0 ||
-        instrumentTypes.some((type) => type !== 'equity' && type !== 'index') ||
+        instrumentTypes.some((type) => type !== 'equity' && type !== 'index' && type !== 'future') ||
         (instrumentIds !== undefined && (
           !Array.isArray(instrumentIds) || instrumentIds.length === 0 || instrumentIds.length > 20_000 ||
           instrumentIds.some((value) => typeof value !== 'string' || value.length === 0 || value.length > 200) ||
@@ -1285,12 +1285,12 @@ export class EvaHttpService extends Service {
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }
-      if (instrument.type === 'index' && adjustment !== 'none') {
+      if (instrument.type !== 'equity' && adjustment !== 'none') {
         return reply.code(422).type('application/problem+json').send({
           type: 'urn:eva:problem:adjustment-unavailable-for-index',
-          title: 'Price adjustment unavailable for index', status: 422,
+          title: 'Price adjustment unavailable for instrument', status: 422,
           code: 'ADJUSTMENT_UNAVAILABLE_FOR_INDEX',
-          detail: 'Price indices are already divisor-adjusted; request adjustment=none.',
+          detail: 'Only equities support price adjustment; request adjustment=none.',
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }

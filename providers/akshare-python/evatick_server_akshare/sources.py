@@ -9,4 +9,6 @@ SOURCE_ORDER: dict[str, tuple[str, ...]] = {
     "index_intraday_bars": ("sina", "eastmoney"),
     "equity_quote": ("sina", "eastmoney", "tencent", "baostock"),
     "index_quote": ("sina", "tencent", "eastmoney", "baostock"),
+    "future_bars": ("cffex", "shfe", "ine", "czce"),
+    "future_quote": ("cffex", "shfe", "ine", "czce"),
 }

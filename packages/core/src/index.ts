@@ -1,4 +1,4 @@
-export type InstrumentType = 'equity' | 'index'
+export type InstrumentType = 'equity' | 'index' | 'future'
 
 export type InstrumentStatus = 'active' | 'inactive'
 
@@ -80,7 +80,7 @@ export interface ConstituentsCall extends ProviderCall {
   asOf?: string
 }
 
-export type DataSourceCategory = 'equity' | 'index'
+export type DataSourceCategory = 'equity' | 'index' | 'future'
 
 export interface ProviderDataSource {
   id: string
@@ -201,7 +201,7 @@ export interface InstrumentSearchMatch {
 }
 
 export function canonicalInstrumentId(instrument: ProviderInstrument): string {
-  const owner = instrument.type === 'equity' ? instrument.venue : instrument.publisher
+  const owner = instrument.type === 'index' ? instrument.publisher : instrument.venue
   if (!owner) {
     throw new Error(`${instrument.type} instrument is missing its identity owner`)
   }

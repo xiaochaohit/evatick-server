@@ -313,6 +313,63 @@ class SourceRoutingTest(unittest.TestCase):
             "data": [{"date": "2026-07-15", "hfq_factor": 4.1025}],
         })
 
+    def test_lists_contracts_from_four_official_futures_sources(self) -> None:
+        fake_akshare = SimpleNamespace(
+            futures_contract_info_cffex=lambda **_kwargs: [
+                {"合约代码": "IF2609", "品种": "IF"},
+            ],
+            futures_contract_info_shfe=lambda **_kwargs: [
+                {"合约代码": "cu2609"},
+            ],
+            futures_contract_info_ine=lambda **_kwargs: [
+                {"合约代码": "sc2609", "品种名称": "原油"},
+            ],
+            futures_contract_info_czce=lambda **_kwargs: [
+                {"合约代码": "SR609", "产品名称": "白糖"},
+            ],
+        )
+        with patch.dict(sys.modules, {"akshare": fake_akshare}):
+            result = execute({"operation": "list_futures"})
+
+        self.assertEqual(result["source"], "exchange")
+        self.assertEqual(
+            [(item["venue"], item["symbol"]) for item in result["data"]],
+            [("CFFEX", "IF2609"), ("SHFE", "cu2609"),
+             ("INE", "sc2609"), ("CZCE", "SR609")],
+        )
+
+    def test_future_bars_use_only_the_contract_exchange(self) -> None:
+        calls: list[dict[str, str]] = []
+
+        def daily(**kwargs):
+            calls.append(kwargs)
+            return [
+                {"symbol": "IF2609", "date": "20260821", "close": 3930},
+                {"symbol": "IC2609", "date": "20260821", "close": 6100},
+            ]
+
+        fake_akshare = SimpleNamespace(get_futures_daily=daily)
+        with patch.dict(sys.modules, {"akshare": fake_akshare}):
+            result = execute({
+                "operation": "bars",
+                "instrumentType": "future",
+                "providerSymbol": "CFFEX:IF2609",
+                "interval": "1d",
+                "start": "2026-08-01",
+                "end": "2026-08-21",
+                "adjustment": "none",
+                "sourceOrder": ["shfe", "cffex", "ine", "czce"],
+            })
+
+        self.assertEqual(result["source"], "cffex")
+        self.assertEqual(result["data"], [
+            {"symbol": "IF2609", "date": "20260821", "close": 3930},
+        ])
+        self.assertEqual(calls, [{
+            "start_date": "20260801", "end_date": "20260821",
+            "market": "CFFEX",
+        }])
+
 
 if __name__ == "__main__":
     unittest.main()

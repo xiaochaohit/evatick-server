@@ -18,6 +18,10 @@ describe('AKShare provider contract', () => {
       }),
       expect.objectContaining({ id: 'tencent', categories: ['equity', 'index'] }),
       expect.objectContaining({ id: 'baostock', categories: ['equity', 'index'] }),
+      expect.objectContaining({ id: 'cffex', categories: ['future'] }),
+      expect.objectContaining({ id: 'shfe', categories: ['future'] }),
+      expect.objectContaining({ id: 'ine', categories: ['future'] }),
+      expect.objectContaining({ id: 'czce', categories: ['future'] }),
     ]))
     await expect(provider.checkDataSource!({
       sourceId: 'sina', category: 'equity',
@@ -41,10 +45,14 @@ describe('AKShare provider contract', () => {
           { code: '920000', name: '安徽凤凰' },
         ] }
       }
-      return { source: 'akshare', data: [
+      if (request.operation === 'list_indices') return { source: 'akshare', data: [
         { index_code: '000001', display_name: '上证指数' },
         { index_code: '000300', display_name: '沪深300' },
         { index_code: '399001', display_name: '深证成指' },
+      ] }
+      return { source: 'exchange', data: [
+        { symbol: 'IF2609', variety: '沪深300股指期货', venue: 'CFFEX' },
+        { 合约: 'cu2609', 品种名称: '铜', venue: 'SHFE' },
       ] }
     }
     const provider = new AkshareProvider({ runner })
@@ -58,8 +66,51 @@ describe('AKShare provider contract', () => {
       expect.objectContaining({ symbol: '000001', publisher: 'SSE', providerSymbol: 'sh000001' }),
       expect.objectContaining({ symbol: '000300', publisher: 'CSI', providerSymbol: 'csi000300' }),
       expect.objectContaining({ symbol: '399001', publisher: 'SZSE', providerSymbol: 'sz399001' }),
+      expect.objectContaining({
+        type: 'future', symbol: 'IF2609', venue: 'CFFEX',
+        providerSymbol: 'CFFEX:IF2609', name: '沪深300股指期货 IF2609',
+      }),
+      expect.objectContaining({
+        type: 'future', symbol: 'cu2609', venue: 'SHFE',
+        providerSymbol: 'SHFE:cu2609', name: '铜 cu2609',
+      }),
     ])
-    expect(signals).toEqual([signal, signal])
+    expect(signals).toEqual([signal, signal, signal])
+  })
+
+  it('routes official futures daily bars and quotes by venue', async () => {
+    const requests: unknown[] = []
+    const runner: AkshareRunner = async (request) => {
+      requests.push(request)
+      return { source: 'cffex', data: [
+        { symbol: 'IF2609', date: '2026-08-20', open: 3900, high: 3920, low: 3880, close: 3910, volume: 1200, turnover: 468000 },
+        { symbol: 'IF2609', date: '2026-08-21', open: 3910, high: 3940, low: 3900, close: 3930, volume: 1500, turnover: 589500 },
+      ] }
+    }
+    const provider = new AkshareProvider({ runner })
+    provider.setDataSourceOrder('future', ['shfe', 'cffex', 'ine', 'czce'])
+    const signal = new AbortController().signal
+
+    await expect(provider.getBars!({
+      providerSymbol: 'CFFEX:IF2609', signal, interval: '1d', adjustment: 'none',
+    })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: 'cffex', tradingDate: '2026-08-21', close: '3930', currency: 'CNY',
+      }),
+    ]))
+    expect(requests[0]).toMatchObject({
+      operation: 'bars', instrumentType: 'future',
+      sourceOrder: ['shfe', 'cffex', 'ine', 'czce'],
+    })
+
+    await expect(provider.getQuote!({
+      providerSymbol: 'CFFEX:IF2609', signal,
+    })).resolves.toMatchObject({
+      source: 'cffex', last: '3930', previousClose: '3910', volume: 1500,
+    })
+    await expect(provider.getBars!({
+      providerSymbol: 'CFFEX:IF2609', signal, interval: '5m', adjustment: 'none',
+    })).rejects.toMatchObject({ code: 'UNSUPPORTED_INTERVAL' })
   })
 
   it('normalizes daily bars and index constituents', async () => {

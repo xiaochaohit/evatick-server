@@ -278,6 +278,88 @@ def _index_bars(
     raise ValueError(f"unsupported index bars source: {source}")
 
 
+FUTURES_VENUES = {
+    "cffex": "CFFEX",
+    "shfe": "SHFE",
+    "ine": "INE",
+    "czce": "CZCE",
+}
+
+
+def _recent_contract_date() -> str:
+    current = datetime.now().date()
+    while current.weekday() >= 5:
+        current -= timedelta(days=1)
+    return current.strftime("%Y%m%d")
+
+
+def _future_contracts(akshare: Any, source: str) -> list[dict[str, Any]]:
+    if source not in FUTURES_VENUES:
+        raise ValueError(f"unsupported futures source: {source}")
+    date_value = _recent_contract_date()
+    if source == "cffex":
+        records = _records(akshare.futures_contract_info_cffex(date=date_value))
+    elif source == "shfe":
+        records = _records(akshare.futures_contract_info_shfe(date=date_value))
+    elif source == "ine":
+        records = _records(akshare.futures_contract_info_ine(date=date_value))
+    else:
+        records = _records(akshare.futures_contract_info_czce(date=date_value))
+    venue = FUTURES_VENUES[source]
+    normalized: list[dict[str, Any]] = []
+    for record in records:
+        symbol = record.get("合约代码", record.get("合约"))
+        if symbol is None or not str(symbol).strip():
+            continue
+        variety = record.get(
+            "品种",
+            record.get("品种名称", record.get("产品名称")),
+        )
+        normalized.append({
+            **record,
+            "symbol": str(symbol).strip(),
+            "variety": None if variety is None else str(variety).strip(),
+            "venue": venue,
+        })
+    return normalized
+
+
+def _list_futures(akshare: Any) -> dict[str, Any]:
+    records: list[dict[str, Any]] = []
+    errors: list[Exception] = []
+    for source in FUTURES_VENUES:
+        try:
+            records.extend(_future_contracts(akshare, source))
+        except Exception as error:
+            errors.append(error)
+    if not records:
+        raise SourcesExhausted(errors)
+    return {"data": records, "source": "exchange"}
+
+
+def _future_bars(
+    akshare: Any, request: dict[str, Any], source: str
+) -> list[dict[str, Any]]:
+    venue, separator, symbol = request["providerSymbol"].partition(":")
+    expected_venue = FUTURES_VENUES.get(source)
+    if not separator or expected_venue != venue.upper():
+        raise ValueError(f"{source} does not publish {venue or 'unknown'} contracts")
+    if request.get("interval", "1d") != "1d":
+        raise ValueError("official futures sources only support daily bars")
+    today = datetime.now().date()
+    start = _compact_date(
+        request.get("start"), (today - timedelta(days=21)).strftime("%Y%m%d")
+    )
+    end = _compact_date(request.get("end"), today.strftime("%Y%m%d"))
+    records = _records(akshare.get_futures_daily(
+        start_date=start, end_date=end, market=expected_venue,
+    ))
+    return [
+        record for record in records
+        if str(record.get("symbol", "")).strip().upper() == symbol.upper()
+    ]
+
+
 def _market_data(
     akshare: Any, request: dict[str, Any]
 ) -> dict[str, Any]:
@@ -299,7 +381,9 @@ def _market_data(
             "adjustment": "none",
         }
     loader = (
-        _intraday_bars
+        _future_bars
+        if instrument_type == "future"
+        else _intraday_bars
         if intraday
         else (_equity_bars if instrument_type == "equity" else _index_bars)
     )
@@ -372,6 +456,10 @@ def _health_check(
         if source not in SOURCE_ORDER["index_bars"]:
             raise ValueError(f"{source} does not support index health checks")
         records = _index_bars(akshare, request, source)
+    elif instrument_type == "future":
+        if source not in SOURCE_ORDER["future_bars"]:
+            raise ValueError(f"{source} does not support futures health checks")
+        records = _future_contracts(akshare, source)
     else:
         raise ValueError(f"unknown instrument type: {instrument_type}")
     if not records:
@@ -399,6 +487,8 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
         return {"data": _records(akshare.stock_info_a_code_name()), "source": "akshare"}
     if operation == "list_indices":
         return {"data": _records(akshare.index_stock_info()), "source": "akshare"}
+    if operation == "list_futures":
+        return _list_futures(akshare)
     if operation == "health":
         return _health_check(
             akshare, request["source"], request["instrumentType"]
