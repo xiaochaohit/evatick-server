@@ -68,6 +68,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
     button { cursor: pointer; padding: 10px 14px; transition: transform .18s, opacity .18s; }
     button:hover { transform: translateY(-1px); } button:disabled { opacity: .5; cursor: wait; transform: none; }
     .primary { background: var(--green); color: #07130f; }
+    .primary.dirty { box-shadow: 0 0 0 4px rgba(89, 214, 173, .12); }
     .secondary { background: #172720; color: var(--muted); }
     .head-actions { display: flex; align-items: center; gap: 10px; }
     .filters { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #10201b; }
@@ -151,9 +152,10 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
     <section class="main-grid">
       <article class="panel">
         <div class="panel-head">
-          <div><div class="panel-title">获取顺序与健康度</div><div class="panel-note">使用箭头调整当前数据类型的来源优先级，修改会立即生效</div></div>
+          <div><div class="panel-title">获取顺序与健康度</div><div class="panel-note">使用箭头调整当前数据类型的来源优先级，点击保存后生效</div></div>
           <div class="head-actions">
             <div class="filters" id="filters"></div>
+            <button class="primary" id="save-order" disabled>保存顺序</button>
             <button class="primary" id="check">立即检测</button>
           </div>
         </div>
@@ -189,6 +191,8 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
     const categoryLabels = { equity: '股票', index: '指数', future: '期货', crypto: '加密货币' };
     let activeCategory = null;
     let latestBody = null;
+    const savedOrders = new Map();
+    const pendingOrders = new Map();
     const formatTime = (value) => value ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value)) : '—';
     const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 
@@ -196,10 +200,19 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
       latestBody = body;
       const allSources = body.data || [];
       const routing = body.routing || [];
+      routing.forEach((item) => {
+        savedOrders.set(item.category, [...item.source_ids]);
+        if (!pendingOrders.has(item.category)) pendingOrders.set(item.category, [...item.source_ids]);
+      });
       if (!routing.some((item) => item.category === activeCategory)) activeCategory = routing[0]?.category || null;
       byId('filters').innerHTML = routing.map((item) => '<button class="filter' + (item.category === activeCategory ? ' active' : '') + '" data-category="' + escapeHtml(item.category) + '">' + escapeHtml(categoryLabels[item.category] || item.category) + '</button>').join('');
       const activeRouting = routing.find((item) => item.category === activeCategory);
-      const positions = new Map((activeRouting?.source_ids || []).map((id, index) => [id, index]));
+      const activeOrder = pendingOrders.get(activeCategory) || activeRouting?.source_ids || [];
+      const positions = new Map(activeOrder.map((id, index) => [id, index]));
+      const savedOrder = savedOrders.get(activeCategory) || [];
+      const dirty = activeOrder.length !== savedOrder.length || activeOrder.some((id, index) => savedOrder[index] !== id);
+      byId('save-order').disabled = !dirty;
+      byId('save-order').classList.toggle('dirty', dirty);
       const sources = allSources.filter((source) => source.category === activeCategory).sort((left, right) => {
         const leftPosition = positions.get(left.provider_id + ':' + left.source_id) ?? Number.MAX_SAFE_INTEGER;
         const rightPosition = positions.get(right.provider_id + ':' + right.source_id) ?? Number.MAX_SAFE_INTEGER;
@@ -244,19 +257,31 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
       if (latestBody) render(latestBody);
     });
 
-    byId('sources').addEventListener('click', async (event) => {
+    byId('sources').addEventListener('click', (event) => {
       const button = event.target.closest('[data-move]');
       if (!button || !latestBody) return;
       const routing = latestBody.routing.find((item) => item.category === activeCategory);
-      const sourceIds = [...routing.source_ids];
+      const sourceIds = [...(pendingOrders.get(activeCategory) || routing.source_ids)];
       const from = sourceIds.indexOf(button.dataset.source);
       const to = button.dataset.move === 'up' ? from - 1 : from + 1;
       if (from < 0 || to < 0 || to >= sourceIds.length) return;
       [sourceIds[from], sourceIds[to]] = [sourceIds[to], sourceIds[from]];
+      pendingOrders.set(activeCategory, sourceIds);
+      render(latestBody);
+    });
+
+    byId('save-order').addEventListener('click', async () => {
+      const category = activeCategory;
+      const sourceIds = pendingOrders.get(category);
+      if (!category || !sourceIds) return;
+      byId('save-order').disabled = true; byId('save-order').textContent = '保存中…';
       try {
-        render(await request('/v1/data-sources/order/' + encodeURIComponent(activeCategory), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source_ids: sourceIds }) }));
+        const body = await request('/v1/data-sources/order/' + encodeURIComponent(category), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source_ids: sourceIds }) });
+        pendingOrders.delete(category);
+        render(body);
         byId('error').textContent = '';
       } catch (error) { byId('error').textContent = error.message; }
+      finally { byId('save-order').textContent = '保存顺序'; if (latestBody) render(latestBody); }
     });
 
     async function request(url, options) {

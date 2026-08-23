@@ -151,6 +151,8 @@ describe('data source management', () => {
       const page = await pageResponse.text()
       expect(page).toContain('数据源管理')
       expect(page).toContain('获取顺序与健康度')
+      expect(page).toContain('id="save-order"')
+      expect(page).toContain('点击保存后生效')
       expect(page).toContain('aria-label="管理目录"')
       expect(page).toContain('class="active" aria-current="page" href="/admin/data-sources"')
       expect(page).toContain('href="/admin/data-sync"')

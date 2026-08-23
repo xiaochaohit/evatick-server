@@ -332,7 +332,7 @@ describe('local historical data synchronization', () => {
       expect(browserResponse.status).toBe(200)
       const browserPage = await browserResponse.text()
       expect(browserPage).toContain('数据浏览')
-      expect(browserPage).toContain('数据源健康')
+      expect(browserPage).not.toContain('数据源健康')
       expect(browserPage).toContain('1 分钟')
       expect(browserPage).toContain('LOCAL ONLY')
       expect(browserPage).toContain('每日分钟完整性')
