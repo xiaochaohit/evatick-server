@@ -14,6 +14,7 @@ export async function startEvaTickDaemon(configurationPath: string) {
   const configuration = await loadEvaDaemonConfiguration(configurationPath)
   await mkdir(dirname(configuration.storage.catalogPath), { recursive: true })
   await mkdir(dirname(configuration.storage.historyPath), { recursive: true })
+  await mkdir(dirname(configuration.storage.dataSourcePreferencesPath), { recursive: true })
   await mkdir(dirname(configuration.admin.credentialsPath), { recursive: true })
   await mkdir(dirname(configuration.admin.apiKeysPath), { recursive: true })
   await assertPythonExecutable(configuration.providers.akshare.pythonExecutable)
@@ -22,6 +23,7 @@ export async function startEvaTickDaemon(configurationPath: string) {
     port: configuration.server.port,
     catalogPath: configuration.storage.catalogPath,
     historyPath: configuration.storage.historyPath,
+    dataSourcePreferencesPath: configuration.storage.dataSourcePreferencesPath,
     adminUsername: configuration.admin.username,
     adminPassword: configuration.admin.initialPassword,
     adminCredentialsPath: configuration.admin.credentialsPath,

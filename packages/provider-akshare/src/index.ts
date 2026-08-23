@@ -10,6 +10,7 @@ import {
   type ConstituentsCall,
   type DataSourceCheckCall,
   type DataSourceCheckResult,
+  type DataSourceCategory,
   type InstrumentProvider,
   type ProviderBar,
   type ProviderAdjustmentFactor,
@@ -32,11 +33,13 @@ export type AkshareRequest =
       start?: string
       end?: string
       adjustment: 'none' | 'forward' | 'backward'
+      sourceOrder?: readonly string[]
     }
   | {
       operation: 'quote'
       instrumentType: 'equity' | 'index'
       providerSymbol: string
+      sourceOrder?: readonly string[]
     }
   | { operation: 'adjustment_factors'; providerSymbol: string }
   | { operation: 'constituents'; providerSymbol: string }
@@ -212,12 +215,17 @@ export class AkshareProvider implements InstrumentProvider {
   ] as const
   private readonly run: AkshareRunner
   private instruments: readonly ProviderInstrument[] | undefined
+  private readonly sourceOrders = new Map<DataSourceCategory, readonly string[]>()
 
   constructor(options: AkshareProviderOptions = {}) {
     this.run = options.runner ?? bridgeRunner(
       options.pythonExecutable ?? 'python3',
       options.pythonModule ?? 'evatick_server_akshare',
     )
+  }
+
+  setDataSourceOrder(category: DataSourceCategory, sourceIds: readonly string[]): void {
+    this.sourceOrders.set(category, [...sourceIds])
   }
 
   async checkDataSource(call: DataSourceCheckCall): Promise<DataSourceCheckResult> {
@@ -292,6 +300,7 @@ export class AkshareProvider implements InstrumentProvider {
       start: call.start,
       end: call.end,
       adjustment: call.adjustment,
+      sourceOrder: this.sourceOrders.get(instrumentType),
     }, call.signal)
     return result.data.flatMap((record): ProviderBar[] => {
       const timestamp = asText(pick(record, 'day', '时间', 'datetime'))
@@ -360,6 +369,7 @@ export class AkshareProvider implements InstrumentProvider {
       : 'equity'
     const result = await this.run({
       operation: 'quote', instrumentType, providerSymbol: call.providerSymbol,
+      sourceOrder: this.sourceOrders.get(instrumentType),
     }, call.signal)
     const records = [...result.data].sort((left, right) =>
       String(pick(left, 'date', '日期')).localeCompare(String(pick(right, 'date', '日期'))))

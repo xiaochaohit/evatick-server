@@ -10,7 +10,8 @@
   },
   "storage": {
     "catalogPath": "/var/lib/evatickd/catalog.sqlite",
-    "historyPath": "/var/lib/evatickd/history.duckdb"
+    "historyPath": "/var/lib/evatickd/history.duckdb",
+    "dataSourcePreferencesPath": "/var/lib/evatickd/data-source-preferences.json"
   },
   "admin": {
     "username": "admin",

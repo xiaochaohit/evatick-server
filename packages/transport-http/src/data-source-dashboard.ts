@@ -5,7 +5,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>数据源状态 · EVA</title>
+  <title>数据源管理 · EVA</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
     :root {
@@ -74,12 +74,15 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
     .filter { padding: 6px 10px; background: transparent; color: var(--muted); }
     .filter.active { color: var(--green); background: #1b3028; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
     .source-list { padding: 8px; }
-    .source { display: grid; grid-template-columns: 44px minmax(130px, 1fr) 110px 105px 105px; gap: 14px; align-items: center; padding: 16px 14px; border-radius: 15px; transition: background .2s; }
+    .source { display: grid; grid-template-columns: 34px 44px minmax(130px, 1fr) 90px 88px 72px; gap: 12px; align-items: center; padding: 16px 14px; border-radius: 15px; transition: background .2s; }
     .source + .source { border-top: 1px solid var(--line); }
     .source:hover { background: rgba(89, 214, 173, .045); }
     .source-mark { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: white; background: var(--green); font: 500 14px "DM Mono", monospace; }
     .source-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
     .source-id { margin-top: 3px; color: var(--muted); font: 400 10px "DM Mono", monospace; }
+    .priority { color: var(--green); font: 500 13px "DM Mono", monospace; text-align: center; }
+    .order-actions { display: flex; gap: 5px; justify-content: flex-end; }
+    .order-button { width: 31px; height: 31px; padding: 0; background: #172720; color: var(--muted); }
     .caps { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
     .cap { padding: 3px 7px; border-radius: 6px; background: #15251f; color: var(--muted); font: 500 10px "DM Mono", monospace; }
     .category { padding: 3px 7px; border-radius: 6px; color: #07130f; background: var(--green); font-size: 10px; font-weight: 700; }
@@ -108,7 +111,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
     @media (max-width: 880px) {
       .overview { grid-template-columns: repeat(2, 1fr); }
       .main-grid { grid-template-columns: 1fr; }
-      .source { grid-template-columns: 44px 1fr auto; }
+      .source { grid-template-columns: 30px 44px 1fr auto; }
       .source .datum { display: none; }
     }
     @media (max-width: 560px) {
@@ -127,13 +130,13 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
   </style>
 </head>
 <body>
-  ${adminNavigation('home')}
+  ${adminNavigation('sources')}
   <main class="shell">
     <header>
       <div>
         <div class="eyebrow">EVA / DATA OPERATIONS</div>
-        <h1>数据源状态</h1>
-        <p class="subtitle">按股票、指数分类持续观察新浪、东方财富、腾讯等上游接口，在 fallback 掩盖故障前发现异常。</p>
+        <h1>数据源管理</h1>
+        <p class="subtitle">每种数据类型维护独立的获取顺序，并持续检测上游健康度。排在前面的来源会优先使用，失败时自动向后回退。</p>
       </div>
       <div class="live"><span class="live-dot"></span><span id="updated">正在连接服务</span></div>
     </header>
@@ -148,13 +151,9 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
     <section class="main-grid">
       <article class="panel">
         <div class="panel-head">
-          <div><div class="panel-title">上游数据源健康</div><div class="panel-note">每个来源按股票、指数独立探测</div></div>
+          <div><div class="panel-title">获取顺序与健康度</div><div class="panel-note">使用箭头调整当前数据类型的来源优先级，修改会立即生效</div></div>
           <div class="head-actions">
-            <div class="filters" id="filters">
-              <button class="filter active" data-category="all">全部</button>
-              <button class="filter" data-category="equity">股票</button>
-              <button class="filter" data-category="index">指数</button>
-            </div>
+            <div class="filters" id="filters"></div>
             <button class="primary" id="check">立即检测</button>
           </div>
         </div>
@@ -187,8 +186,8 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
   <script>
     const byId = (id) => document.getElementById(id);
     const labels = { healthy: '健康', unhealthy: '异常', checking: '检测中', unknown: '未检测' };
-    const categoryLabels = { equity: '股票', index: '指数' };
-    let activeCategory = 'all';
+    const categoryLabels = { equity: '股票', index: '指数', future: '期货', crypto: '加密货币' };
+    let activeCategory = null;
     let latestBody = null;
     const formatTime = (value) => value ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value)) : '—';
     const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -196,9 +195,16 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
     function render(body) {
       latestBody = body;
       const allSources = body.data || [];
-      const sources = activeCategory === 'all'
-        ? allSources
-        : allSources.filter((source) => source.category === activeCategory);
+      const routing = body.routing || [];
+      if (!routing.some((item) => item.category === activeCategory)) activeCategory = routing[0]?.category || null;
+      byId('filters').innerHTML = routing.map((item) => '<button class="filter' + (item.category === activeCategory ? ' active' : '') + '" data-category="' + escapeHtml(item.category) + '">' + escapeHtml(categoryLabels[item.category] || item.category) + '</button>').join('');
+      const activeRouting = routing.find((item) => item.category === activeCategory);
+      const positions = new Map((activeRouting?.source_ids || []).map((id, index) => [id, index]));
+      const sources = allSources.filter((source) => source.category === activeCategory).sort((left, right) => {
+        const leftPosition = positions.get(left.provider_id + ':' + left.source_id) ?? Number.MAX_SAFE_INTEGER;
+        const rightPosition = positions.get(right.provider_id + ':' + right.source_id) ?? Number.MAX_SAFE_INTEGER;
+        return leftPosition - rightPosition || left.source_name.localeCompare(right.source_name);
+      });
       const healthy = sources.filter((source) => source.status === 'healthy').length;
       const unhealthy = sources.filter((source) => source.status === 'unhealthy').length;
       const latencies = sources.map((source) => source.latency_ms).filter((value) => value !== null);
@@ -217,12 +223,16 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
       }
       byId('sources').innerHTML = sources.map((source) => {
         const error = source.error ? ' · ' + escapeHtml(source.error.message) : '';
+        const routingId = source.provider_id + ':' + source.source_id;
+        const position = positions.get(routingId);
+        const orderActions = position === undefined ? '<span class="datum">本地</span>' : '<div class="order-actions"><button class="order-button" data-move="up" data-source="' + escapeHtml(routingId) + '" aria-label="上移">↑</button><button class="order-button" data-move="down" data-source="' + escapeHtml(routingId) + '" aria-label="下移">↓</button></div>';
         return '<div class="source" title="' + error + '">' +
+          '<div class="priority">' + (position === undefined ? '—' : String(position + 1).padStart(2, '0')) + '</div>' +
           '<div class="source-mark">' + escapeHtml(source.source_id.slice(0, 2).toUpperCase()) + '</div>' +
-          '<div><div class="source-name">' + escapeHtml(source.source_name) + '</div><div class="source-id">' + escapeHtml(source.provider_id + ' / ' + source.source_id) + '</div><div class="caps"><span class="category">' + categoryLabels[source.category] + '</span>' + source.capabilities.map((cap) => '<span class="cap">' + escapeHtml(cap) + '</span>').join('') + '</div></div>' +
+          '<div><div class="source-name">' + escapeHtml(source.source_name) + '</div><div class="source-id">' + escapeHtml(source.provider_id + ' / ' + source.source_id) + '</div><div class="caps"><span class="category">' + escapeHtml(categoryLabels[source.category] || source.category) + '</span>' + source.capabilities.map((cap) => '<span class="cap">' + escapeHtml(cap) + '</span>').join('') + '</div></div>' +
           '<span class="status ' + source.status + '">' + labels[source.status] + '</span>' +
           '<span class="datum">' + (source.latency_ms === null ? '—' : source.latency_ms + ' ms') + '</span>' +
-          '<span class="datum">' + formatTime(source.last_checked_at) + '</span>' +
+          orderActions +
         '</div>';
       }).join('');
     }
@@ -231,8 +241,22 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
       const button = event.target.closest('[data-category]');
       if (!button) return;
       activeCategory = button.dataset.category;
-      document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button));
       if (latestBody) render(latestBody);
+    });
+
+    byId('sources').addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-move]');
+      if (!button || !latestBody) return;
+      const routing = latestBody.routing.find((item) => item.category === activeCategory);
+      const sourceIds = [...routing.source_ids];
+      const from = sourceIds.indexOf(button.dataset.source);
+      const to = button.dataset.move === 'up' ? from - 1 : from + 1;
+      if (from < 0 || to < 0 || to >= sourceIds.length) return;
+      [sourceIds[from], sourceIds[to]] = [sourceIds[to], sourceIds[from]];
+      try {
+        render(await request('/v1/data-sources/order/' + encodeURIComponent(activeCategory), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source_ids: sourceIds }) }));
+        byId('error').textContent = '';
+      } catch (error) { byId('error').textContent = error.message; }
     });
 
     async function request(url, options) {

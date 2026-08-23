@@ -94,6 +94,32 @@ class SourceRoutingTest(unittest.TestCase):
         self.assertEqual(result["data"][0]["volume"], 1234)
         self.assertIsNone(result["data"][0]["amount"])
 
+    def test_request_can_override_source_order_for_its_data_type(self) -> None:
+        calls: list[str] = []
+
+        def sina(**_kwargs):
+            calls.append("sina")
+            return [{"date": "should-not-run"}]
+
+        def eastmoney(**_kwargs):
+            calls.append("eastmoney")
+            return [{"date": "2026-08-20", "close": 11.1}]
+
+        fake_akshare = SimpleNamespace(
+            stock_zh_a_daily=sina,
+            stock_zh_a_hist=eastmoney,
+        )
+        with patch.dict(sys.modules, {"akshare": fake_akshare}):
+            result = execute({
+                "operation": "bars", "instrumentType": "equity",
+                "providerSymbol": "sz000001", "interval": "1d",
+                "adjustment": "none",
+                "sourceOrder": ["eastmoney", "sina", "tencent", "baostock"],
+            })
+
+        self.assertEqual(calls, ["eastmoney"])
+        self.assertEqual(result["source"], "eastmoney")
+
     def test_baostock_health_checks_equity_and_index(self) -> None:
         queried_codes: list[str] = []
         logout_calls: list[bool] = []

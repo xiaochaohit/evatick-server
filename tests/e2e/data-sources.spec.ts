@@ -8,12 +8,20 @@ import {
 
 describe('data source management', () => {
   it('reports provider health and supports manual checks', async () => {
+    const setDataSourceOrder = vi.fn()
     const healthyProvider: InstrumentProvider = {
       id: 'fixture-provider',
-      dataSources: [{
-        id: 'sina', name: '新浪财经', categories: ['equity', 'index'],
-        capabilities: { equity: ['日线'], index: ['日线'] },
-      }],
+      dataSources: [
+        {
+          id: 'sina', name: '新浪财经', categories: ['equity', 'index'],
+          capabilities: { equity: ['日线'], index: ['日线'] },
+        },
+        {
+          id: 'eastmoney', name: '东方财富', categories: ['equity'],
+          capabilities: { equity: ['日线'] },
+        },
+      ],
+      setDataSourceOrder,
       async listInstruments() {
         return []
       },
@@ -66,8 +74,33 @@ describe('data source management', () => {
       expect(listResponse.status).toBe(200)
       expect(await listResponse.json()).toMatchObject({
         schema: 'eva.data-source-list.v1',
+        routing: expect.arrayContaining([{
+          category: 'equity',
+          source_ids: ['fixture-provider:sina', 'fixture-provider:eastmoney'],
+        }]),
         schedule: { enabled: false, interval_seconds: 0, next_check_at: null },
       })
+
+      const orderResponse = await fetch(`${server.url}/v1/data-sources/order/equity`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          source_ids: ['fixture-provider:eastmoney', 'fixture-provider:sina'],
+        }),
+      })
+      expect(orderResponse.status).toBe(200)
+      expect(await orderResponse.json()).toMatchObject({
+        routing: expect.arrayContaining([{
+          category: 'equity',
+          source_ids: ['fixture-provider:eastmoney', 'fixture-provider:sina'],
+        }]),
+      })
+      expect(setDataSourceOrder).toHaveBeenCalledWith('equity', ['eastmoney', 'sina'])
+
+      const invalidOrder = await fetch(`${server.url}/v1/data-sources/order/equity`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ source_ids: ['fixture-provider:sina'] }),
+      })
+      expect(invalidOrder.status).toBe(400)
     } finally {
       await server.close()
     }
@@ -116,10 +149,10 @@ describe('data source management', () => {
       expect(pageResponse.status).toBe(200)
       expect(pageResponse.headers.get('content-type')).toContain('text/html')
       const page = await pageResponse.text()
-      expect(page).toContain('数据浏览')
-      expect(page).toContain('数据源健康')
+      expect(page).toContain('数据源管理')
+      expect(page).toContain('获取顺序与健康度')
       expect(page).toContain('aria-label="管理目录"')
-      expect(page).toContain('class="active" aria-current="page" href="/admin"')
+      expect(page).toContain('class="active" aria-current="page" href="/admin/data-sources"')
       expect(page).toContain('href="/admin/data-sync"')
 
       const invalidInterval = await fetch(`${server.url}/v1/data-sources/schedule`, {

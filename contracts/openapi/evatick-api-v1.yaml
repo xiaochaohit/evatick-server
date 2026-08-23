@@ -71,6 +71,45 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/data-sources/order/{category}:
+    put:
+      operationId: updateDataSourceOrder
+      summary: Replace the preferred and fallback source order for one data category
+      parameters:
+        - in: path
+          name: category
+          required: true
+          schema:
+            type: string
+            enum: [equity, index]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_ids]
+              properties:
+                source_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Updated routing order and current source health.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSourceListResponse'
+        default:
+          description: Invalid category or incomplete source order.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/data-sync:
     get:
       operationId: getDataSyncStatus
@@ -651,10 +690,23 @@ components:
         next_check_at:
           type: [string, 'null']
           format: date-time
+    DataSourceRoutingOrder:
+      type: object
+      additionalProperties: false
+      required: [category, source_ids]
+      properties:
+        category:
+          type: string
+          enum: [equity, index]
+        source_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
     DataSourceListResponse:
       type: object
       additionalProperties: false
-      required: [schema, data, schedule, generated_at]
+      required: [schema, data, routing, schedule, generated_at]
       properties:
         schema:
           const: eva.data-source-list.v1
@@ -662,6 +714,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DataSourceHealth'
+        routing:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataSourceRoutingOrder'
         schedule:
           $ref: '#/components/schemas/DataSourceSchedule'
         generated_at:

@@ -305,7 +305,16 @@ def _market_data(
     )
     errors: list[Exception] = []
     empty_result: dict[str, Any] | None = None
-    for source in SOURCE_ORDER[key]:
+    configured_order = request.get("sourceOrder")
+    default_order = SOURCE_ORDER[key]
+    source_order = (
+        tuple(source for source in configured_order if source in default_order)
+        if isinstance(configured_order, list)
+        else default_order
+    )
+    if not source_order:
+        source_order = default_order
+    for source in source_order:
         try:
             data = loader(akshare, source_request, source)
             if operation == "quote":

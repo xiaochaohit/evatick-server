@@ -30,6 +30,7 @@ export interface EvaTickServerOptions {
   adminPassword?: string
   adminCredentialsPath?: string
   apiKeysPath?: string
+  dataSourcePreferencesPath?: string
   host?: string
   port?: number
 }
