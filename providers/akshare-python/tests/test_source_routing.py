@@ -313,7 +313,7 @@ class SourceRoutingTest(unittest.TestCase):
             "data": [{"date": "2026-07-15", "hfq_factor": 4.1025}],
         })
 
-    def test_lists_contracts_from_four_official_futures_sources(self) -> None:
+    def test_lists_contracts_from_six_official_futures_sources(self) -> None:
         fake_akshare = SimpleNamespace(
             futures_contract_info_cffex=lambda **_kwargs: [
                 {"合约代码": "IF2609", "品种": "IF"},
@@ -330,6 +330,12 @@ class SourceRoutingTest(unittest.TestCase):
             futures_contract_info_czce=lambda **_kwargs: [
                 {"合约代码": "SR609", "产品名称": "白糖"},
             ],
+            futures_contract_info_dce=lambda: [
+                {"合约": "i2609", "品种名称": "铁矿石"},
+            ],
+            futures_contract_info_gfex=lambda: [
+                {"合约代码": "lc2609", "品种": "碳酸锂"},
+            ],
         )
         with patch.dict(sys.modules, {"akshare": fake_akshare}):
             result = execute({"operation": "list_futures"})
@@ -338,7 +344,8 @@ class SourceRoutingTest(unittest.TestCase):
         self.assertEqual(
             [(item["venue"], item["symbol"]) for item in result["data"]],
             [("CFFEX", "IF2609"), ("SHFE", "cu2609"),
-             ("INE", "sc2609"), ("CZCE", "SR609")],
+             ("INE", "sc2609"), ("CZCE", "SR609"),
+             ("DCE", "i2609"), ("GFEX", "lc2609")],
         )
 
     def test_future_bars_use_only_the_contract_exchange(self) -> None:
@@ -371,6 +378,36 @@ class SourceRoutingTest(unittest.TestCase):
         self.assertEqual(calls, [{
             "start_date": "20260801", "end_date": "20260821",
             "market": "CFFEX",
+        }])
+
+    def test_future_daily_snapshot_keeps_every_contract(self) -> None:
+        calls: list[dict[str, str]] = []
+
+        def daily(**kwargs):
+            calls.append(kwargs)
+            return [
+                {"symbol": "i2609", "date": "20260821", "close": 801},
+                {"symbol": "i2610", "date": "20260821", "close": 790},
+            ]
+
+        with patch.dict(sys.modules, {
+            "akshare": SimpleNamespace(get_futures_daily=daily),
+        }):
+            result = execute({
+                "operation": "futures_daily_snapshot",
+                "venue": "DCE",
+                "tradingDate": "2026-08-21",
+            })
+
+        self.assertEqual(result, {
+            "source": "dce",
+            "data": [
+                {"symbol": "i2609", "date": "20260821", "close": 801},
+                {"symbol": "i2610", "date": "20260821", "close": 790},
+            ],
+        })
+        self.assertEqual(calls, [{
+            "start_date": "20260821", "end_date": "20260821", "market": "DCE",
         }])
 
 

@@ -284,6 +284,8 @@ FUTURES_VENUES = {
     "shfe": "SHFE",
     "ine": "INE",
     "czce": "CZCE",
+    "dce": "DCE",
+    "gfex": "GFEX",
 }
 
 
@@ -304,8 +306,12 @@ def _future_contracts(akshare: Any, source: str) -> list[dict[str, Any]]:
         records = _records(akshare.futures_contract_info_shfe(date=date_value))
     elif source == "ine":
         records = _records(akshare.futures_contract_info_ine(date=date_value))
-    else:
+    elif source == "czce":
         records = _records(akshare.futures_contract_info_czce(date=date_value))
+    elif source == "dce":
+        records = _records(akshare.futures_contract_info_dce())
+    else:
+        records = _records(akshare.futures_contract_info_gfex())
     venue = FUTURES_VENUES[source]
     normalized: list[dict[str, Any]] = []
     for record in records:
@@ -375,6 +381,21 @@ def _future_bars(
         record for record in records
         if str(record.get("symbol", "")).strip().upper() == symbol.upper()
     ]
+
+
+def _future_daily_snapshot(
+    akshare: Any, venue: str, trading_date: str
+) -> dict[str, Any]:
+    normalized_venue = venue.upper()
+    if normalized_venue not in FUTURES_VENUES.values():
+        raise ValueError(f"unsupported futures venue: {venue}")
+    compact_date = _compact_date(trading_date, trading_date)
+    records = _records(akshare.get_futures_daily(
+        start_date=compact_date,
+        end_date=compact_date,
+        market=normalized_venue,
+    ))
+    return {"data": records, "source": normalized_venue.lower()}
 
 
 def _market_data(
@@ -506,6 +527,10 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
         return {"data": _records(akshare.index_stock_info()), "source": "akshare"}
     if operation == "list_futures":
         return _list_futures(akshare)
+    if operation == "futures_daily_snapshot":
+        return _future_daily_snapshot(
+            akshare, request["venue"], request["tradingDate"]
+        )
     if operation == "health":
         return _health_check(
             akshare, request["source"], request["instrumentType"]

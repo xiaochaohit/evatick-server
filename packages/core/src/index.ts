@@ -59,6 +59,27 @@ export interface BarsCall extends ProviderCall {
   adjustment: PriceAdjustment
 }
 
+export interface FuturesDailySnapshotCall {
+  venue: string
+  tradingDate: string
+  signal: AbortSignal
+}
+
+export interface ProviderFuturesDailyRow {
+  source?: string
+  venue: string
+  symbol: string
+  tradingDate: string
+  open: string
+  high: string
+  low: string
+  close: string
+  settlement: string | null
+  volume: number | null
+  turnover: string | null
+  openInterest: number | null
+}
+
 export interface ProviderAdjustmentFactor {
   source?: string
   effectiveDate: string
@@ -128,6 +149,9 @@ export interface InstrumentProvider {
   close?(): Promise<void> | void
   getQuote?(call: ProviderCall): Promise<ProviderQuote>
   getBars?(call: BarsCall): Promise<readonly ProviderBar[]>
+  getFuturesDailySnapshot?(
+    call: FuturesDailySnapshotCall,
+  ): Promise<readonly ProviderFuturesDailyRow[]>
   getAdjustmentFactors?(
     call: AdjustmentFactorsCall,
   ): Promise<readonly ProviderAdjustmentFactor[]>

@@ -22,6 +22,8 @@ describe('AKShare provider contract', () => {
       expect.objectContaining({ id: 'shfe', categories: ['future'] }),
       expect.objectContaining({ id: 'ine', categories: ['future'] }),
       expect.objectContaining({ id: 'czce', categories: ['future'] }),
+      expect.objectContaining({ id: 'dce', categories: ['future'] }),
+      expect.objectContaining({ id: 'gfex', categories: ['future'] }),
     ]))
     await expect(provider.checkDataSource!({
       sourceId: 'sina', category: 'equity',
@@ -53,6 +55,8 @@ describe('AKShare provider contract', () => {
       return { source: 'exchange', data: [
         { symbol: 'IF2609', variety: '沪深300股指期货', venue: 'CFFEX' },
         { 合约: 'cu2609', 品种名称: '铜', venue: 'SHFE' },
+        { 合约: 'i2609', 品种名称: '铁矿石', venue: 'DCE' },
+        { symbol: 'lc2609', variety: '碳酸锂', venue: 'GFEX' },
       ] }
     }
     const provider = new AkshareProvider({ runner })
@@ -73,6 +77,14 @@ describe('AKShare provider contract', () => {
       expect.objectContaining({
         type: 'future', symbol: 'cu2609', venue: 'SHFE',
         providerSymbol: 'SHFE:cu2609', name: '铜 cu2609',
+      }),
+      expect.objectContaining({
+        type: 'future', symbol: 'i2609', venue: 'DCE',
+        providerSymbol: 'DCE:i2609', name: '铁矿石 i2609',
+      }),
+      expect.objectContaining({
+        type: 'future', symbol: 'lc2609', venue: 'GFEX',
+        providerSymbol: 'GFEX:lc2609', name: '碳酸锂 lc2609',
       }),
     ])
     expect(signals).toEqual([signal, signal, signal])
@@ -114,6 +126,28 @@ describe('AKShare provider contract', () => {
     await expect(provider.getBars!({
       providerSymbol: 'CFFEX:IF2609', signal, interval: '5m', adjustment: 'none',
     })).rejects.toMatchObject({ code: 'UNSUPPORTED_INTERVAL' })
+  })
+
+  it('loads a complete exchange trading-day snapshot without filtering contracts', async () => {
+    const requests: unknown[] = []
+    const runner: AkshareRunner = async (request) => {
+      requests.push(request)
+      return { source: 'dce', data: [
+        { symbol: 'i2609', date: '20260821', open: 790, high: 805, low: 788, close: 801, volume: 1200, open_interest: 4500 },
+        { symbol: 'i2610', date: '20260821', open: 780, high: 795, low: 777, close: 790, volume: 900, open_interest: 5100 },
+      ] }
+    }
+    const provider = new AkshareProvider({ runner })
+
+    await expect(provider.getFuturesDailySnapshot!({
+      venue: 'DCE', tradingDate: '2026-08-21', signal: new AbortController().signal,
+    })).resolves.toEqual([
+      expect.objectContaining({ symbol: 'i2609', tradingDate: '2026-08-21', close: '801', openInterest: 4500 }),
+      expect.objectContaining({ symbol: 'i2610', tradingDate: '2026-08-21', close: '790', openInterest: 5100 }),
+    ])
+    expect(requests).toEqual([{
+      operation: 'futures_daily_snapshot', venue: 'DCE', tradingDate: '2026-08-21',
+    }])
   })
 
   it('normalizes daily bars and index constituents', async () => {
