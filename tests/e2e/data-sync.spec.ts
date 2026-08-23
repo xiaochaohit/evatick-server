@@ -336,6 +336,10 @@ describe('local historical data synchronization', () => {
       expect(browserPage).toContain('1 分钟')
       expect(browserPage).toContain('LOCAL ONLY')
       expect(browserPage).toContain('每日分钟完整性')
+      expect(browserPage).toContain('id="bar-chart-canvas"')
+      expect(browserPage).toContain('data-view="chart"')
+      expect(browserPage).toContain('data-view="table"')
+      expect(browserPage).toContain('行情柱图')
       expect(browserPage).toContain('class="active" aria-current="page" href="/admin"')
 
       const dailyScheduleResponse = await fetch(`${server.url}/v1/data-sync/schedules`, {
