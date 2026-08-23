@@ -863,6 +863,16 @@ export class DataSyncManager {
       finished_at: null,
       errors: [],
     }
+    if (instruments.length === 0) {
+      run.status = 'failed'
+      run.finished_at = new Date().toISOString()
+      run.errors = [{
+        instrument_id: '', symbol: '', message: 'DATA_SYNC_NO_INSTRUMENTS',
+      }]
+      await this.persistRun(run)
+      this.lastRun = run
+      return run
+    }
     this.activeRun = run
     this.cancelled = false
     await this.persistRun(run)

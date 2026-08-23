@@ -31,6 +31,32 @@ async function waitForRun(url: string) {
 }
 
 describe('local historical data synchronization', () => {
+  it('records an empty catalog synchronization as failed', async () => {
+    const server = await createEvaTickServer({ healthCheckIntervalMs: 0 })
+    try {
+      const response = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['equity'], interval: '1d',
+          start: '2026-08-01', end: '2026-08-23', adjustment: 'none',
+        }),
+      })
+      expect(response.status).toBe(202)
+      expect(await response.json()).toMatchObject({
+        data: {
+          status: 'failed', total: 0, finished_at: expect.any(String),
+          errors: [{ message: 'DATA_SYNC_NO_INSTRUMENTS' }],
+        },
+      })
+      const status = await fetch(`${server.url}/v1/data-sync`).then((result) => result.json())
+      expect(status).toMatchObject({
+        data: { active_run: null, last_run: { status: 'failed', total: 0 } },
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
   it('stores one-minute bars separately and serves covered requests from DuckDB', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'eva-minute-sync-'))
     const requestedIntervals: string[] = []
