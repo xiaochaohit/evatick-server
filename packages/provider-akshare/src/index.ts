@@ -444,9 +444,11 @@ export class AkshareProvider implements InstrumentProvider {
       providerSymbol: call.providerSymbol,
     }, call.signal)
     const asOfDate = call.asOf ?? new Date().toISOString().slice(0, 10)
+    const seen = new Set<string>()
     return result.data.flatMap((record, index): ProviderConstituent[] => {
       const code = asText(pick(record, '品种代码', '成分券代码', '成分股代码', 'code', 'symbol'))
-      if (!code) return []
+      if (!code || seen.has(code)) return []
+      seen.add(code)
       const rawWeight = asNumber(pick(record, '权重', '权重(%)', 'weight'))
       return [{
         constituentProviderSymbol: stockProviderSymbol(code), asOfDate,

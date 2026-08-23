@@ -9,6 +9,7 @@ export interface EvaDaemonConfiguration {
     port: number
     retryAttempts: number
     requestTimeoutMs: number
+    providerConcurrency: number
     healthCheckIntervalSeconds: number
     healthCheckTimeoutMs: number
   }
@@ -73,7 +74,7 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
   const server = objectAt(root.server, 'configuration.server')
   rejectUnknownKeys(server, [
     'host', 'port', 'retryAttempts', 'requestTimeoutMs',
-    'healthCheckIntervalSeconds', 'healthCheckTimeoutMs',
+    'providerConcurrency', 'healthCheckIntervalSeconds', 'healthCheckTimeoutMs',
   ], 'configuration.server')
   const storage = objectAt(root.storage, 'configuration.storage')
   rejectUnknownKeys(storage, ['catalogPath', 'historyPath', 'dataSourcePreferencesPath'], 'configuration.storage')
@@ -105,6 +106,12 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
       port: integerAt(server.port, 'configuration.server.port', 0, 65_535),
       retryAttempts: integerAt(server.retryAttempts, 'configuration.server.retryAttempts', 1, 10),
       requestTimeoutMs: integerAt(server.requestTimeoutMs, 'configuration.server.requestTimeoutMs', 1, 300_000),
+      providerConcurrency: integerAt(
+        server.providerConcurrency ?? 4,
+        'configuration.server.providerConcurrency',
+        1,
+        64,
+      ),
       healthCheckIntervalSeconds: integerAt(server.healthCheckIntervalSeconds, 'configuration.server.healthCheckIntervalSeconds', 0, 86_400),
       healthCheckTimeoutMs: integerAt(server.healthCheckTimeoutMs, 'configuration.server.healthCheckTimeoutMs', 1, 300_000),
     },

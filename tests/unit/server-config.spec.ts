@@ -17,6 +17,7 @@ function configuration() {
       port: 8765,
       retryAttempts: 2,
       requestTimeoutMs: 30_000,
+      providerConcurrency: 4,
       healthCheckIntervalSeconds: 3_600,
       healthCheckTimeoutMs: 10_000,
     },

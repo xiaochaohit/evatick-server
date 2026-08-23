@@ -31,6 +31,7 @@ export async function startEvaTickDaemon(configurationPath: string) {
     apiKeysPath: configuration.admin.apiKeysPath,
     retryAttempts: configuration.server.retryAttempts,
     requestTimeoutMs: configuration.server.requestTimeoutMs,
+    providerConcurrency: configuration.server.providerConcurrency,
     healthCheckIntervalMs: configuration.server.healthCheckIntervalSeconds * 1_000,
     healthCheckTimeoutMs: configuration.server.healthCheckTimeoutMs,
   })

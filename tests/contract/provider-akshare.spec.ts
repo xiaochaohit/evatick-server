@@ -120,7 +120,10 @@ describe('AKShare provider contract', () => {
       if (request.operation === 'bars') {
         return { source: 'sina', data: [{ date: '2026-08-14', open: 10, high: 11, low: 9, close: 10.5, volume: 123, amount: 456 }] }
       }
-      return { source: 'akshare', data: [{ 品种代码: '600000', 品种名称: '浦发银行', 权重: 2.5 }] }
+      return { source: 'akshare', data: [
+        { 品种代码: '600000', 品种名称: '浦发银行', 权重: 2.5 },
+        { 品种代码: '600000', 品种名称: '浦发银行', 权重: 2.5 },
+      ] }
     }
     const provider = new AkshareProvider({ runner })
     provider.setDataSourceOrder('equity', ['eastmoney', 'sina'])

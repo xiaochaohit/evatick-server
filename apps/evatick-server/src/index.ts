@@ -22,6 +22,7 @@ export interface EvaTickServer {
 export interface EvaTickServerOptions {
   retryAttempts?: number
   requestTimeoutMs?: number
+  providerConcurrency?: number
   healthCheckIntervalMs?: number
   healthCheckTimeoutMs?: number
   catalogPath?: string

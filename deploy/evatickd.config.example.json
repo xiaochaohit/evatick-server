@@ -5,6 +5,7 @@
     "port": 8765,
     "retryAttempts": 2,
     "requestTimeoutMs": 30000,
+    "providerConcurrency": 4,
     "healthCheckIntervalSeconds": 3600,
     "healthCheckTimeoutMs": 30000
   },
