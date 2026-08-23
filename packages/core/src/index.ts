@@ -116,7 +116,10 @@ export interface ProviderInstrument {
 export interface InstrumentProvider {
   readonly id: string
   readonly dataSources?: readonly ProviderDataSource[]
-  listInstruments(signal?: AbortSignal): Promise<readonly ProviderInstrument[]>
+  listInstruments(
+    signal?: AbortSignal,
+    options?: { refresh?: boolean },
+  ): Promise<readonly ProviderInstrument[]>
   checkDataSource?(call: DataSourceCheckCall): Promise<DataSourceCheckResult>
   setDataSourceOrder?(
     category: DataSourceCategory,

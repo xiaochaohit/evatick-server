@@ -198,6 +198,7 @@ export interface SyncInstrumentSummary {
 interface DataSyncDependencies {
   databasePath: string
   loadInstruments(): Promise<readonly CatalogInstrument[]>
+  refreshInstruments(): Promise<readonly CatalogInstrument[]>
   loadBars(
     instrument: CatalogInstrument,
     request: {
@@ -1471,6 +1472,7 @@ export class DataSyncManager {
       const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
       const start = schedule.interval === '1m' ? subtractDays(today, 92) : '1990-01-01'
       try {
+        await this.dependencies.refreshInstruments()
         await this.start({
           instrumentTypes: schedule.instrument_types,
           ...(schedule.instrument_ids ? { instrumentIds: schedule.instrument_ids } : {}),

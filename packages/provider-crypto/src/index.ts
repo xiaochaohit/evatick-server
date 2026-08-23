@@ -127,8 +127,11 @@ export class BinanceProvider implements InstrumentProvider {
     return { recordsChecked: 1 }
   }
 
-  async listInstruments(signal = new AbortController().signal): Promise<readonly ProviderInstrument[]> {
-    if (this.instruments) return this.instruments
+  async listInstruments(
+    signal = new AbortController().signal,
+    options: { refresh?: boolean } = {},
+  ): Promise<readonly ProviderInstrument[]> {
+    if (this.instruments && !options.refresh) return this.instruments
     const payload = object(
       await requestJson(this.fetcher, this.baseUrl, '/api/v3/exchangeInfo', signal),
       'Binance exchange information',
@@ -262,8 +265,11 @@ export class CoinbaseProvider implements InstrumentProvider {
     return { recordsChecked: 1 }
   }
 
-  async listInstruments(signal = new AbortController().signal): Promise<readonly ProviderInstrument[]> {
-    if (this.instruments) return this.instruments
+  async listInstruments(
+    signal = new AbortController().signal,
+    options: { refresh?: boolean } = {},
+  ): Promise<readonly ProviderInstrument[]> {
+    if (this.instruments && !options.refresh) return this.instruments
     const payload = array(
       await requestJson(this.fetcher, this.baseUrl, '/products', signal),
       'Coinbase products',

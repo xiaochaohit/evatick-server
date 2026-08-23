@@ -29,7 +29,7 @@ import { BoundedExecutor, SingleFlight } from './concurrency.js'
 import { dataBrowserDashboardHtml } from './data-browser-dashboard.js'
 import { dataSourceDashboardHtml } from './data-source-dashboard.js'
 import { DataSourcePreferences } from './data-source-preferences.js'
-import { DataSyncManager } from './data-sync-manager.js'
+import { DataSyncManager, nextDataSyncRun } from './data-sync-manager.js'
 import { dataSyncDashboardHtml } from './data-sync-dashboard.js'
 import { ProviderHealthMonitor } from './provider-health.js'
 
@@ -84,6 +84,7 @@ export class EvaHttpService extends Service {
   private readonly dataSyncManager: DataSyncManager
   private readonly adminAuth: AdminAuth
   private readonly apiKeyAuth: ApiKeyAuth
+  private catalogRefreshTimer: ReturnType<typeof setTimeout> | undefined
   private address: string | undefined
 
   constructor(
@@ -205,7 +206,7 @@ export class EvaHttpService extends Service {
         })),
     }))
 
-    const loadCatalogOnce = async () => {
+    const loadCatalogOnce = async (forceRefresh = false) => {
       const providers = ctx.marketProviderRegistry.list()
       const results = await Promise.all(
         providers.map(async (provider) => {
@@ -213,7 +214,7 @@ export class EvaHttpService extends Service {
             const result = await retryProviderCall({
               ...routingOptions,
               invoke: (signal) => providerCalls.run(() =>
-                provider.listInstruments(signal)),
+                provider.listInstruments(signal, { refresh: forceRefresh })),
             })
             const fetchedAt = new Date().toISOString()
             await ctx.marketCatalogStore.writeProvider({
@@ -275,7 +276,36 @@ export class EvaHttpService extends Service {
         ],
       }
     }
-    const loadCatalog = () => catalogFlights.run('catalog', loadCatalogOnce)
+    let cachedCatalog: Awaited<ReturnType<typeof loadCatalogOnce>> | undefined
+    let cachedProviderSignature = ''
+    let catalogRefreshedAt: string | null = null
+    const loadCatalog = (forceRefresh = false) => {
+      const providerSignature = ctx.marketProviderRegistry.list()
+        .map((provider) => provider.id).sort().join('\u0000')
+      if (!forceRefresh && cachedCatalog && cachedProviderSignature === providerSignature) {
+        return Promise.resolve(cachedCatalog)
+      }
+      return catalogFlights.run('catalog', async () => {
+        if (!forceRefresh && cachedCatalog && cachedProviderSignature === providerSignature) {
+          return cachedCatalog
+        }
+        const catalog = await loadCatalogOnce(forceRefresh)
+        cachedCatalog = catalog
+        cachedProviderSignature = providerSignature
+        catalogRefreshedAt = catalog.sources.map((source) => source.fetched_at).sort().at(-1) ?? null
+        return catalog
+      })
+    }
+    const scheduleDailyCatalogRefresh = () => {
+      const next = nextDataSyncRun(new Date(), '08:00', false)
+      this.catalogRefreshTimer = setTimeout(() => {
+        void loadCatalog(true).catch((error: unknown) => {
+          process.stderr.write(`[catalog-refresh] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
+        }).finally(scheduleDailyCatalogRefresh)
+      }, next.getTime() - Date.now())
+      this.catalogRefreshTimer.unref()
+    }
+    scheduleDailyCatalogRefresh()
 
     const meta = (
       sources: readonly {
@@ -340,6 +370,7 @@ export class EvaHttpService extends Service {
     this.dataSyncManager = new DataSyncManager({
       databasePath: this.config.historyPath ?? ':memory:',
       loadInstruments: async () => (await loadCatalog()).instruments,
+      refreshInstruments: async () => (await loadCatalog(true)).instruments,
       loadBars: async (instrument, request) => {
         const result = await loadProviderBars(instrument, request)
         return {
@@ -612,6 +643,22 @@ export class EvaHttpService extends Service {
         schema: 'eva.data-sync-instrument-list.v1',
         data: result.items,
         page: { total: result.total, limit, offset },
+        meta: { catalog_refreshed_at: catalogRefreshedAt },
+      }
+    })
+
+    this.app.post('/v1/data-sync/instruments/refresh', async (_request, reply) => {
+      const catalog = await loadCatalog(true)
+      reply.header('cache-control', 'no-store')
+      return {
+        schema: 'eva.data-sync-catalog-refresh.v1',
+        data: {
+          instruments: catalog.instruments.length,
+          refreshed_at: catalogRefreshedAt,
+          sources: catalog.sources,
+          partial: catalog.partial,
+          warnings: catalog.warnings,
+        },
       }
     })
 
@@ -1605,6 +1652,8 @@ export class EvaHttpService extends Service {
   }
 
   async close(): Promise<void> {
+    if (this.catalogRefreshTimer) clearTimeout(this.catalogRefreshTimer)
+    this.catalogRefreshTimer = undefined
     this.healthMonitor.close()
     await this.dataSyncManager.close()
     if (!this.address) return

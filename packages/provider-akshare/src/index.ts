@@ -278,8 +278,11 @@ export class AkshareProvider implements InstrumentProvider {
     return { recordsChecked }
   }
 
-  async listInstruments(signal = new AbortController().signal): Promise<readonly ProviderInstrument[]> {
-    if (this.instruments) return this.instruments
+  async listInstruments(
+    signal = new AbortController().signal,
+    options: { refresh?: boolean } = {},
+  ): Promise<readonly ProviderInstrument[]> {
+    if (this.instruments && !options.refresh) return this.instruments
     const [stockResult, indexResult, futureResult] = await Promise.all([
       this.run({ operation: 'list_stocks' }, signal),
       this.run({ operation: 'list_indices' }, signal),

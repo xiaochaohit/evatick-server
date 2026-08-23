@@ -59,9 +59,11 @@ describe('local historical data synchronization', () => {
 
   it('lists the searchable sync catalog and synchronizes only selected instruments', async () => {
     const requestedSymbols: string[] = []
+    const catalogRefreshes: boolean[] = []
     const provider: InstrumentProvider = {
       id: 'selected-sync-fixture',
-      async listInstruments() {
+      async listInstruments(_signal, options) {
+        catalogRefreshes.push(options?.refresh ?? false)
         return ['600000', '600001', '600002'].map((symbol) => ({
           type: 'equity' as const, market: 'CN' as const, name: `股票${symbol}`, symbol,
           providerSymbol: `sh${symbol}`, venue: 'XSHG', currency: 'CNY',
@@ -92,7 +94,22 @@ describe('local historical data synchronization', () => {
           daily_records: 0, minute_records: 0,
         }],
         page: { total: 1, limit: 50, offset: 0 },
+        meta: { catalog_refreshed_at: expect.any(String) },
       })
+      expect(catalogRefreshes).toEqual([false])
+
+      const refreshed = await fetch(`${server.url}/v1/data-sync/instruments/refresh`, {
+        method: 'POST',
+      })
+      expect(refreshed.status).toBe(200)
+      expect(await refreshed.json()).toMatchObject({
+        schema: 'eva.data-sync-catalog-refresh.v1',
+        data: { instruments: 3, refreshed_at: expect.any(String), partial: false },
+      })
+      expect(catalogRefreshes).toEqual([false, true])
+
+      await fetch(`${server.url}/v1/data-sync/instruments?type=equity&limit=50&offset=0`)
+      expect(catalogRefreshes).toEqual([false, true])
 
       const selectedId = 'cn:equity:XSHG:600001'
       const start = await fetch(`${server.url}/v1/data-sync/runs`, {
@@ -384,6 +401,7 @@ describe('local historical data synchronization', () => {
       expect(page).toContain('同步此标的')
       expect(page).toContain('同步所选')
       expect(page).toContain('全部同步')
+      expect(page).toContain('刷新标的目录')
       expect(page).toContain('回溯最近（天）')
       expect(page).toContain('周一至周五')
       expect(page).toContain('<option value="1m" selected>1 分钟</option>')
