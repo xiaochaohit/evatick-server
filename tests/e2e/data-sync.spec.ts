@@ -574,12 +574,23 @@ describe('local historical data synchronization', () => {
       })
 
       const runs = await fetch(`${server.url}/v1/data-sync/runs`).then((response) => response.json()) as {
-        data: { run_id: string; trigger: string; succeeded: number }[]
+        data: {
+          run_id: string; trigger: string; status: string; succeeded: number
+          recovery_status: string; retry_count: number
+          latest_retry_run_id: string | null; remaining_failed: number
+        }[]
       }
       expect(runs.data.slice(0, 2)).toMatchObject([
         { trigger: 'retry', succeeded: 1 },
-        { run_id: firstRunId, trigger: 'manual', succeeded: 1 },
+        {
+          run_id: firstRunId, trigger: 'manual', status: 'completed_with_errors',
+          succeeded: 1, recovery_status: 'recovered', retry_count: 1,
+          latest_retry_run_id: retryRunId, remaining_failed: 0,
+        },
       ])
+      const recoveredItems = await fetch(`${server.url}/v1/data-sync/runs/${firstRunId}/items`)
+        .then((response) => response.json()) as { data: { status: string }[] }
+      expect(recoveredItems.data.map((item) => item.status).sort()).toEqual(['completed', 'recovered'])
 
       const rerun = await fetch(`${server.url}/v1/data-sync/runs/${retryRunId}/retry`, {
         method: 'POST', headers: { 'content-type': 'application/json' },

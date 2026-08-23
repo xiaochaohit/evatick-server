@@ -702,7 +702,7 @@ components:
     DataSyncRun:
       type: object
       additionalProperties: true
-      required: [run_id, trigger, schedule_id, retry_of_run_id, status, interval, total, completed, succeeded, failed, bars_written]
+      required: [run_id, trigger, schedule_id, retry_of_run_id, recovery_status, retry_count, latest_retry_run_id, remaining_failed, status, interval, total, completed, succeeded, failed, bars_written]
       properties:
         run_id:
           type: string
@@ -719,6 +719,20 @@ components:
             - type: 'null'
             - type: string
               format: uuid
+        recovery_status:
+          type: string
+          enum: [not_needed, not_retried, retrying, partially_recovered, recovered]
+        retry_count:
+          type: integer
+          minimum: 0
+        latest_retry_run_id:
+          oneOf:
+            - type: 'null'
+            - type: string
+              format: uuid
+        remaining_failed:
+          type: integer
+          minimum: 0
         status:
           type: string
           enum: [running, completed, completed_with_errors, cancelled, failed]
@@ -753,7 +767,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, running, completed, failed, cancelled]
+          enum: [pending, running, completed, failed, cancelled, recovered]
         bars_written:
           type: integer
           minimum: 0

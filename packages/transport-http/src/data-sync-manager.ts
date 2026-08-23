@@ -43,6 +43,10 @@ export interface DataSyncRun {
   trigger: 'manual' | 'scheduled' | 'retry'
   schedule_id: number | null
   retry_of_run_id: string | null
+  recovery_status: 'not_needed' | 'not_retried' | 'retrying' | 'partially_recovered' | 'recovered'
+  retry_count: number
+  latest_retry_run_id: string | null
+  remaining_failed: number
   status: 'running' | 'completed' | 'completed_with_errors' | 'cancelled' | 'failed'
   instrument_types: readonly InstrumentType[]
   interval: DataSyncInterval
@@ -75,7 +79,7 @@ export interface DataSyncRunItem {
   instrument_id: string
   symbol: string
   name: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'recovered'
   bars_written: number
   error: string | null
   started_at: string | null
@@ -844,6 +848,10 @@ export class DataSyncManager {
       trigger: metadata.trigger,
       schedule_id: metadata.scheduleId ?? null,
       retry_of_run_id: metadata.retryOfRunId ?? null,
+      recovery_status: 'not_needed',
+      retry_count: 0,
+      latest_retry_run_id: null,
+      remaining_failed: 0,
       status: 'running',
       instrument_types: [...request.instrumentTypes],
       interval: request.interval ?? '1d',
@@ -877,6 +885,7 @@ export class DataSyncManager {
     this.cancelled = false
     await this.persistRun(run)
     await this.createRunItems(run.run_id, instruments)
+    if (run.retry_of_run_id) await this.markRetryStarted(run.retry_of_run_id, run.run_id)
     this.launch(run, instruments)
     return run
   }
@@ -927,6 +936,7 @@ export class DataSyncManager {
           message: error instanceof Error ? error.message : String(error),
         }].slice(-MAX_ERRORS)
         await this.persistRun(run)
+        if (run.retry_of_run_id) await this.reconcileRetry(run)
         this.lastRun = run
         this.activeRun = null
       })
@@ -942,6 +952,10 @@ export class DataSyncManager {
       trigger: stored.trigger ?? 'manual',
       schedule_id: stored.schedule_id ?? null,
       retry_of_run_id: stored.retry_of_run_id ?? null,
+      recovery_status: stored.recovery_status ?? (stored.failed > 0 ? 'not_retried' : 'not_needed'),
+      retry_count: stored.retry_count ?? 0,
+      latest_retry_run_id: stored.latest_retry_run_id ?? null,
+      remaining_failed: stored.remaining_failed ?? stored.failed,
       interval: stored.interval ?? '1d',
       lookback_days: stored.lookback_days ?? 10,
       status: typeof status === 'string' ? status as DataSyncRun['status'] : stored.status,
@@ -1568,6 +1582,8 @@ export class DataSyncManager {
       : run.failed > 0
         ? 'completed_with_errors'
         : 'completed'
+    run.recovery_status = run.failed > 0 ? 'not_retried' : 'not_needed'
+    run.remaining_failed = run.failed
     run.finished_at = new Date().toISOString()
     if (this.cancelled) {
       await this.db.run(`
@@ -1576,6 +1592,7 @@ export class DataSyncManager {
       `, { run_id: run.run_id })
     }
     await this.persistRun(run)
+    if (run.retry_of_run_id) await this.reconcileRetry(run)
     this.lastRun = run
     this.activeRun = null
   }
@@ -1894,6 +1911,60 @@ export class DataSyncManager {
       started_at: run.started_at,
       finished_at: run.finished_at ?? '',
     })
+  }
+
+  private async readRun(runId: string): Promise<DataSyncRun | null> {
+    const reader = await this.db.runAndReadAll(`
+      SELECT status, payload::VARCHAR AS payload, finished_at::VARCHAR AS finished_at
+      FROM sync_runs WHERE run_id = $run_id
+    `, { run_id: runId })
+    const row = reader.getRowObjectsJson()[0]
+    return typeof row?.payload === 'string'
+      ? this.normalizeRun(JSON.parse(row.payload) as DataSyncRun, row.status, row.finished_at)
+      : null
+  }
+
+  private async markRetryStarted(sourceRunId: string, retryRunId: string): Promise<void> {
+    let currentId: string | null = sourceRunId
+    while (currentId) {
+      const source = await this.readRun(currentId)
+      if (!source) return
+      source.recovery_status = 'retrying'
+      source.retry_count += 1
+      source.latest_retry_run_id = retryRunId
+      await this.persistRun(source)
+      if (this.lastRun?.run_id === source.run_id) this.lastRun = source
+      currentId = source.retry_of_run_id
+    }
+  }
+
+  private async reconcileRetry(retryRun: DataSyncRun): Promise<void> {
+    const completedIds = (await this.runItems(retryRun.run_id))
+      .filter((item) => item.status === 'completed')
+      .map((item) => item.instrument_id)
+    let currentId = retryRun.retry_of_run_id
+    while (currentId) {
+      const source = await this.readRun(currentId)
+      if (!source) return
+      if (completedIds.length) {
+        for (const instrumentId of completedIds) {
+          await this.db.run(`
+            UPDATE sync_run_items SET status = 'recovered'
+            WHERE run_id = $run_id AND status = 'failed' AND instrument_id = $instrument_id
+          `, { run_id: source.run_id, instrument_id: instrumentId })
+        }
+      }
+      const sourceItems = await this.runItems(source.run_id)
+      const remaining = sourceItems.length
+        ? sourceItems.filter((item) => item.status === 'failed').length
+        : Math.max(source.remaining_failed - completedIds.length, 0)
+      source.remaining_failed = remaining
+      source.recovery_status = remaining === 0 ? 'recovered' : 'partially_recovered'
+      source.latest_retry_run_id = retryRun.run_id
+      await this.persistRun(source)
+      if (this.lastRun?.run_id === source.run_id) this.lastRun = source
+      currentId = source.retry_of_run_id
+    }
   }
 
   private async createRunItems(
