@@ -166,7 +166,6 @@ export class EvaHttpService extends Service {
     const adjustmentFactorFlights = new SingleFlight()
     const quoteFlights = new SingleFlight()
     const constituentFlights = new SingleFlight()
-    const futuresSnapshotFlights = new SingleFlight()
     this.healthMonitor = new ProviderHealthMonitor(
       () => ctx.marketProviderRegistry.list(),
       Math.max(this.config.healthCheckIntervalMs ?? 3_600_000, 0),
@@ -378,35 +377,6 @@ export class EvaHttpService extends Service {
       })
     }
 
-    const loadFuturesDailySnapshot = (venue: string, tradingDate: string) =>
-      futuresSnapshotFlights.run(`${venue}:${tradingDate}`, async () => {
-        const providers = await providersFor({ type: 'future' })
-        let lastError: unknown
-        for (const provider of providers) {
-          if (typeof provider.getFuturesDailySnapshot !== 'function') continue
-          try {
-            const result = await retryProviderCall({
-              ...routingOptions,
-              invoke: (signal) => providerCalls.run(() =>
-                provider.getFuturesDailySnapshot!({ venue, tradingDate, signal })),
-            })
-            return {
-              provider: provider.id,
-              upstream: result.value[0]?.source ?? venue.toLowerCase(),
-              rows: result.value,
-            }
-          } catch (error) {
-            lastError = error
-          }
-        }
-        if (lastError instanceof Error) throw lastError
-        throw new ProviderError(
-          'CAPABILITY_UNAVAILABLE',
-          'No enabled provider supplies futures daily snapshots.',
-          false,
-        )
-      })
-
     this.dataSyncManager = new DataSyncManager({
       databasePath: this.config.historyPath ?? ':memory:',
       loadInstruments: async () => (await loadCatalog()).instruments,
@@ -420,7 +390,6 @@ export class EvaHttpService extends Service {
         }
       },
       loadAdjustmentFactors,
-      loadFuturesDailySnapshot,
     })
 
     const dataSourcesResponse = async () => {

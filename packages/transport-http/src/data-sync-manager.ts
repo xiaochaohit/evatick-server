@@ -12,7 +12,6 @@ import type {
   PriceAdjustment,
   ProviderAdjustmentFactor,
   ProviderBar,
-  ProviderFuturesDailyRow,
 } from '@evatick/core'
 
 export type DataSyncInterval = Extract<BarInterval, '1m' | '1d'>
@@ -40,24 +39,6 @@ export interface SyncedAdjustmentFactors {
   upstream?: string
   factors: readonly ProviderAdjustmentFactor[]
   asOfDate: string
-}
-
-export interface SyncedFuturesDailySnapshot {
-  provider: string
-  upstream?: string
-  rows: readonly ProviderFuturesDailyRow[]
-}
-
-interface FuturesSeriesMember {
-  tradingDate: string
-  contractId: string
-  contractSymbol: string
-  selectionMetric: 'open_interest' | 'volume'
-  selectionValue: number
-}
-
-interface SyncedFuturesMainSeries extends SyncedBars {
-  members: readonly FuturesSeriesMember[]
 }
 
 export interface DataSyncRun {
@@ -231,10 +212,6 @@ interface DataSyncDependencies {
   loadAdjustmentFactors(
     instrument: CatalogInstrument,
   ): Promise<SyncedAdjustmentFactors | null>
-  loadFuturesDailySnapshot(
-    venue: string,
-    tradingDate: string,
-  ): Promise<SyncedFuturesDailySnapshot>
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -291,15 +268,24 @@ function futuresProductName(instrument: CatalogInstrument): string {
 }
 
 function futuresMainSeriesInstrument(
-  venue: string,
+  contract: CatalogInstrument,
   product: string,
   name: string,
 ): CatalogInstrument {
+  const venue = contract.venue!
+  const identifiers = contract.identifiers
+    .filter((identifier) =>
+      identifier.capabilities.includes('bars') && identifier.mainContinuousValue)
+    .map((identifier) => ({
+      provider: identifier.provider,
+      value: identifier.mainContinuousValue!,
+      capabilities: ['bars' as const],
+    }))
   return {
     instrumentId: `cn:future-series:${venue}:${product}:main`,
     type: 'future', market: 'CN', name: `${name} ${product} 主力连续（未复权）`,
     symbol: product, venue, currency: 'CNY', status: 'active', aliases: [],
-    capabilities: ['bars'], identifiers: [],
+    capabilities: ['bars'], identifiers,
   }
 }
 
@@ -326,11 +312,6 @@ export class DataSyncManager {
   private readonly schedules = new Map<number, DataSyncSchedule>()
   private pendingScheduleIds: number[] = []
   private readonly writes = new BoundedExecutor(1)
-  private readonly futuresSnapshotCache = new Map<
-    string,
-    Promise<SyncedFuturesDailySnapshot>
-  >()
-
   private syncInstruments(
     catalog: readonly CatalogInstrument[],
     instrumentTypes: readonly InstrumentType[],
@@ -347,9 +328,10 @@ export class DataSyncManager {
       if (!product) continue
       const key = `${contract.venue}:${product}`
       if (!products.has(key)) {
-        products.set(key, futuresMainSeriesInstrument(
-          contract.venue, product, futuresProductName(contract),
-        ))
+        const series = futuresMainSeriesInstrument(
+          contract, product, futuresProductName(contract),
+        )
+        if (series.identifiers.length) products.set(key, series)
       }
     }
     return [...regular, ...products.values()]
@@ -976,7 +958,6 @@ export class DataSyncManager {
     }
     this.activeRun = run
     this.cancelled = false
-    this.futuresSnapshotCache.clear()
     await this.persistRun(run)
     await this.createRunItems(run.run_id, instruments)
     if (run.retry_of_run_id) await this.markRetryStarted(run.retry_of_run_id, run.run_id)
@@ -1039,7 +1020,6 @@ export class DataSyncManager {
         this.activeRun = null
       })
       .finally(() => {
-        this.futuresSnapshotCache.clear()
         this.execution = null
         void this.runNextScheduledTask()
       })
@@ -1669,14 +1649,12 @@ export class DataSyncManager {
           ? laterDate(run.start, subtractDays(storedRange.last, run.lookback_days))
           : run.start
         const [result, adjustmentFactors] = await Promise.all([
-          FUTURES_SERIES_ID.test(instrument.instrumentId)
-            ? this.loadFuturesMainSeries(instrument, start, run.end)
-            : this.dependencies.loadBars(instrument, {
-                interval: run.interval,
-                start,
-                end: run.end,
-                adjustment: 'none',
-              }),
+          this.dependencies.loadBars(instrument, {
+            interval: run.interval,
+            start,
+            end: run.end,
+            adjustment: 'none',
+          }),
           instrument.type === 'equity' && run.interval === '1d'
             ? this.dependencies.loadAdjustmentFactors(instrument)
             : null,
@@ -1684,10 +1662,10 @@ export class DataSyncManager {
         await this.writes.run(async () => {
           await this.upsertInstrument(instrument)
           await this.upsertBars(instrument, result, run.adjustment, run.interval)
-          if ('members' in result && Array.isArray(result.members)) {
-            await this.upsertFuturesSeriesMembers(
-              instrument.instrumentId, result as SyncedFuturesMainSeries,
-            )
+          if (FUTURES_SERIES_ID.test(instrument.instrumentId)) {
+            await this.db.run(`
+              DELETE FROM futures_series_members WHERE series_id = $series_id
+            `, { series_id: instrument.instrumentId })
           }
           if (adjustmentFactors) {
             await this.upsertAdjustmentFactors(instrument.instrumentId, adjustmentFactors)
@@ -1748,70 +1726,6 @@ export class DataSyncManager {
     const source = run.retry_of_run_id ? await this.reconcileRetry(run) : null
     this.lastRun = source ?? run
     this.activeRun = null
-  }
-
-  private async loadFuturesMainSeries(
-    instrument: CatalogInstrument,
-    start: string,
-    end: string,
-  ): Promise<SyncedFuturesMainSeries> {
-    const match = instrument.instrumentId.match(FUTURES_SERIES_ID)
-    if (!match || !instrument.venue) throw new Error('INVALID_FUTURES_SERIES_ID')
-    const product = match[2]!
-    const bars: ProviderBar[] = []
-    const members: FuturesSeriesMember[] = []
-    const providers = new Set<string>()
-    const upstreams = new Set<string>()
-    for (let tradingDate = start; tradingDate <= end; tradingDate = addDays(tradingDate, 1)) {
-      if (this.cancelled) break
-      const snapshotKey = `${instrument.venue}:${tradingDate}`
-      let snapshotRequest = this.futuresSnapshotCache.get(snapshotKey)
-      if (!snapshotRequest) {
-        snapshotRequest = this.dependencies.loadFuturesDailySnapshot(
-          instrument.venue, tradingDate,
-        )
-        this.futuresSnapshotCache.set(snapshotKey, snapshotRequest)
-      }
-      const snapshot = await snapshotRequest
-      providers.add(snapshot.provider)
-      if (snapshot.upstream) upstreams.add(snapshot.upstream)
-      const candidates = snapshot.rows.filter((row) =>
-        row.venue === instrument.venue &&
-        row.tradingDate === tradingDate &&
-        futuresProductCode(row.symbol) === product)
-      if (!candidates.length) continue
-      const useOpenInterest = candidates.some((row) => row.openInterest !== null)
-      const metric = useOpenInterest ? 'open_interest' : 'volume'
-      const selected = [...candidates].sort((left, right) => {
-        const leftValue = (useOpenInterest ? left.openInterest : left.volume) ?? -1
-        const rightValue = (useOpenInterest ? right.openInterest : right.volume) ?? -1
-        return rightValue - leftValue || left.symbol.localeCompare(right.symbol)
-      })[0]!
-      const selectionValue = (useOpenInterest ? selected.openInterest : selected.volume) ?? 0
-      bars.push({
-        source: selected.source ?? snapshot.upstream,
-        interval: '1d', tradingDate,
-        periodStart: `${tradingDate}T00:00:00+08:00`,
-        periodEnd: `${tradingDate}T23:59:59+08:00`,
-        currency: instrument.currency,
-        open: selected.open, high: selected.high, low: selected.low, close: selected.close,
-        volume: selected.volume, turnover: selected.turnover,
-        adjustment: 'none', complete: true,
-      })
-      members.push({
-        tradingDate,
-        contractId: `cn:future:${instrument.venue}:${selected.symbol}`,
-        contractSymbol: selected.symbol,
-        selectionMetric: metric,
-        selectionValue,
-      })
-    }
-    return {
-      provider: [...providers].join(',') || 'exchange-snapshot',
-      upstream: [...upstreams].join(',') || instrument.venue.toLowerCase(),
-      bars,
-      members,
-    }
   }
 
   private async upsertInstrument(instrument: CatalogInstrument): Promise<void> {
@@ -1979,39 +1893,6 @@ export class DataSyncManager {
         upstream = excluded.upstream,
         fetched_at = excluded.fetched_at
     `)
-  }
-
-  private async upsertFuturesSeriesMembers(
-    seriesId: string,
-    result: SyncedFuturesMainSeries,
-  ): Promise<void> {
-    for (const member of result.members) {
-      await this.db.run(`
-        INSERT INTO futures_series_members VALUES (
-          $series_id, $trading_date::DATE, $contract_id, $contract_symbol,
-          'same-day-max-open-interest-v1', $selection_metric, $selection_value,
-          $provider, $upstream, current_timestamp
-        )
-        ON CONFLICT (series_id, trading_date) DO UPDATE SET
-          contract_id = excluded.contract_id,
-          contract_symbol = excluded.contract_symbol,
-          selection_rule = excluded.selection_rule,
-          selection_metric = excluded.selection_metric,
-          selection_value = excluded.selection_value,
-          provider = excluded.provider,
-          upstream = excluded.upstream,
-          updated_at = excluded.updated_at
-      `, {
-        series_id: seriesId,
-        trading_date: member.tradingDate,
-        contract_id: member.contractId,
-        contract_symbol: member.contractSymbol,
-        selection_metric: member.selectionMetric,
-        selection_value: member.selectionValue,
-        provider: result.provider,
-        upstream: result.upstream ?? null,
-      })
-    }
   }
 
   private async upsertMinuteBars(

@@ -14,17 +14,14 @@ describe('AKShare provider contract', () => {
 
     expect(provider.dataSources).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'sina', name: '新浪财经', categories: ['equity', 'index'],
+        id: 'sina', name: '新浪财经', categories: ['equity', 'index', 'future'],
       }),
       expect.objectContaining({ id: 'tencent', categories: ['equity', 'index'] }),
       expect.objectContaining({ id: 'baostock', categories: ['equity', 'index'] }),
-      expect.objectContaining({ id: 'cffex', categories: ['future'] }),
-      expect.objectContaining({ id: 'shfe', categories: ['future'] }),
-      expect.objectContaining({ id: 'ine', categories: ['future'] }),
-      expect.objectContaining({ id: 'czce', categories: ['future'] }),
-      expect.objectContaining({ id: 'dce', categories: ['future'] }),
-      expect.objectContaining({ id: 'gfex', categories: ['future'] }),
     ]))
+    expect(provider.dataSources.map((source) => source.id)).toEqual([
+      'sina', 'eastmoney', 'tencent', 'baostock',
+    ])
     await expect(provider.checkDataSource!({
       sourceId: 'sina', category: 'equity',
       signal: new AbortController().signal,
@@ -53,10 +50,10 @@ describe('AKShare provider contract', () => {
         { index_code: '399001', display_name: '深证成指' },
       ] }
       return { source: 'exchange', data: [
-        { symbol: 'IF2609', variety: '沪深300股指期货', venue: 'CFFEX' },
-        { 合约: 'cu2609', 品种名称: '铜', venue: 'SHFE' },
-        { 合约: 'i2609', 品种名称: '铁矿石', venue: 'DCE' },
-        { symbol: 'lc2609', variety: '碳酸锂', venue: 'GFEX' },
+        { symbol: 'IF2609', variety: '沪深300股指期货', venue: 'CFFEX', main_symbol: 'MAIN:CFFEX:IF' },
+        { 合约: 'cu2609', 品种名称: '铜', venue: 'SHFE', main_symbol: 'MAIN:SHFE:CU' },
+        { 合约: 'i2609', 品种名称: '铁矿石', venue: 'DCE', main_symbol: 'MAIN:DCE:I' },
+        { symbol: 'lc2609', variety: '碳酸锂', venue: 'GFEX', main_symbol: 'MAIN:GFEX:LC' },
       ] }
     }
     const provider = new AkshareProvider({ runner })
@@ -73,6 +70,7 @@ describe('AKShare provider contract', () => {
       expect.objectContaining({
         type: 'future', symbol: 'IF2609', venue: 'CFFEX',
         providerSymbol: 'CFFEX:IF2609', name: '沪深300股指期货 IF2609',
+        mainContinuousProviderSymbol: 'MAIN:CFFEX:IF',
       }),
       expect.objectContaining({
         type: 'future', symbol: 'cu2609', venue: 'SHFE',
@@ -90,64 +88,51 @@ describe('AKShare provider contract', () => {
     expect(signals).toEqual([signal, signal, signal])
   })
 
-  it('routes official futures daily bars and quotes by venue', async () => {
+  it('routes contract and main continuous futures daily bars through Sina', async () => {
     const requests: unknown[] = []
     const runner: AkshareRunner = async (request) => {
       requests.push(request)
-      return { source: 'cffex', data: [
+      return { source: 'sina', data: [
         { symbol: 'IF2609', date: '20260820', open: 3900, high: 3920, low: 3880, close: 3910, volume: 1200, turnover: 468000 },
         { symbol: 'IF2609', date: '20260821', open: 3910, high: 3940, low: 3900, close: 3930, volume: 1500, turnover: 589500 },
       ] }
     }
     const provider = new AkshareProvider({ runner })
-    provider.setDataSourceOrder('future', ['shfe', 'cffex', 'ine', 'czce'])
+    provider.setDataSourceOrder('future', ['sina'])
     const signal = new AbortController().signal
 
     await expect(provider.getBars!({
       providerSymbol: 'CFFEX:IF2609', signal, interval: '1d', adjustment: 'none',
     })).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
-        source: 'cffex', tradingDate: '2026-08-21', close: '3930', currency: 'CNY',
+        source: 'sina', tradingDate: '2026-08-21', close: '3930', currency: 'CNY',
         periodStart: '2026-08-21T00:00:00+08:00',
         periodEnd: '2026-08-21T23:59:59+08:00',
       }),
     ]))
     expect(requests[0]).toMatchObject({
       operation: 'bars', instrumentType: 'future',
-      sourceOrder: ['shfe', 'cffex', 'ine', 'czce'],
+      sourceOrder: ['sina'],
+    })
+
+    await provider.getBars!({
+      providerSymbol: 'MAIN:CFFEX:IF', signal, interval: '1d', adjustment: 'none',
+      start: '2026-08-01', end: '2026-08-21',
+    })
+    expect(requests[1]).toMatchObject({
+      operation: 'bars', instrumentType: 'future', providerSymbol: 'MAIN:CFFEX:IF',
+      sourceOrder: ['sina'],
     })
 
     await expect(provider.getQuote!({
       providerSymbol: 'CFFEX:IF2609', signal,
     })).resolves.toMatchObject({
-      source: 'cffex', last: '3930', previousClose: '3910', volume: 1500,
+      source: 'sina', last: '3930', previousClose: '3910', volume: 1500,
       marketTime: '2026-08-21T23:59:59+08:00',
     })
     await expect(provider.getBars!({
       providerSymbol: 'CFFEX:IF2609', signal, interval: '5m', adjustment: 'none',
     })).rejects.toMatchObject({ code: 'UNSUPPORTED_INTERVAL' })
-  })
-
-  it('loads a complete exchange trading-day snapshot without filtering contracts', async () => {
-    const requests: unknown[] = []
-    const runner: AkshareRunner = async (request) => {
-      requests.push(request)
-      return { source: 'dce', data: [
-        { symbol: 'i2609', date: '20260821', open: 790, high: 805, low: 788, close: 801, volume: 1200, open_interest: 4500 },
-        { symbol: 'i2610', date: '20260821', open: 780, high: 795, low: 777, close: 790, volume: 900, open_interest: 5100 },
-      ] }
-    }
-    const provider = new AkshareProvider({ runner })
-
-    await expect(provider.getFuturesDailySnapshot!({
-      venue: 'DCE', tradingDate: '2026-08-21', signal: new AbortController().signal,
-    })).resolves.toEqual([
-      expect.objectContaining({ symbol: 'i2609', tradingDate: '2026-08-21', close: '801', openInterest: 4500 }),
-      expect.objectContaining({ symbol: 'i2610', tradingDate: '2026-08-21', close: '790', openInterest: 5100 }),
-    ])
-    expect(requests).toEqual([{
-      operation: 'futures_daily_snapshot', venue: 'DCE', tradingDate: '2026-08-21',
-    }])
   })
 
   it('normalizes daily bars and index constituents', async () => {

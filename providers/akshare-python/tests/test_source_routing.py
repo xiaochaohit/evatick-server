@@ -60,6 +60,7 @@ class SourceRoutingTest(unittest.TestCase):
         self.assertEqual(
             SOURCE_ORDER["index_intraday_bars"], ("sina", "eastmoney")
         )
+        self.assertEqual(SOURCE_ORDER["future_bars"], ("sina",))
         self.assertIsNot(SOURCE_ORDER["equity_bars"], SOURCE_ORDER["index_bars"])
 
     def test_equity_bars_fall_back_to_tencent(self) -> None:
@@ -313,101 +314,99 @@ class SourceRoutingTest(unittest.TestCase):
             "data": [{"date": "2026-07-15", "hfq_factor": 4.1025}],
         })
 
-    def test_lists_contracts_from_six_official_futures_sources(self) -> None:
+    def test_lists_current_contracts_from_eastmoney_catalog(self) -> None:
         fake_akshare = SimpleNamespace(
-            futures_contract_info_cffex=lambda **_kwargs: [
-                {"合约代码": "IF2609", "品种": "IF"},
-                {"合约代码": "HO2608-C-2500", "品种": "HO"},
-                {"合约代码": "MO2608-P-4000", "品种": "MO"},
+            futures_hist_table_em=lambda: [
+                {"市场简称": "中金所", "合约中文代码": "沪深300股指2609", "合约代码": "IF2609"},
+                {"市场简称": "上期所", "合约中文代码": "沪铜2609", "合约代码": "cu2609"},
+                {"市场简称": "上期能源", "合约中文代码": "原油2609", "合约代码": "sc2609"},
+                {"市场简称": "郑商所", "合约中文代码": "白糖609", "合约代码": "SR609"},
+                {"市场简称": "大商所", "合约中文代码": "铁矿石2609", "合约代码": "i2609"},
+                {"市场简称": "广期所", "合约中文代码": "碳酸锂2609", "合约代码": "lc2609"},
+                {"市场简称": "大商所", "合约中文代码": "铁矿石主连", "合约代码": "im"},
             ],
-            futures_contract_info_shfe=lambda **_kwargs: [
-                {"合约代码": "cu2609"},
-                {"合约代码": "sc2609"},
-            ],
-            futures_contract_info_ine=lambda **_kwargs: [
-                {"合约代码": "sc2609", "品种名称": "原油"},
-            ],
-            futures_contract_info_czce=lambda **_kwargs: [
-                {"合约代码": "SR609", "产品名称": "白糖"},
-            ],
-            futures_contract_info_dce=lambda: [
-                {"合约": "i2609", "品种名称": "铁矿石"},
-            ],
-            futures_contract_info_gfex=lambda: [
-                {"合约代码": "lc2609", "品种": "碳酸锂"},
+            futures_display_main_sina=lambda: [
+                {"symbol": "IF0", "exchange": "cffex", "name": "沪深300指数期货连续"},
+                {"symbol": "CU0", "exchange": "shfe", "name": "铜连续"},
+                {"symbol": "SC0", "exchange": "ine", "name": "上海原油连续"},
+                {"symbol": "SR0", "exchange": "czce", "name": "白糖连续"},
+                {"symbol": "I0", "exchange": "dce", "name": "铁矿石连续"},
+                {"symbol": "LC0", "exchange": "gfex", "name": "碳酸锂连续"},
             ],
         )
         with patch.dict(sys.modules, {"akshare": fake_akshare}):
             result = execute({"operation": "list_futures"})
 
-        self.assertEqual(result["source"], "exchange")
+        self.assertEqual(result["source"], "eastmoney-catalog+sina-main")
         self.assertEqual(
-            [(item["venue"], item["symbol"]) for item in result["data"]],
-            [("CFFEX", "IF2609"), ("SHFE", "cu2609"),
-             ("INE", "sc2609"), ("CZCE", "SR609"),
-             ("DCE", "i2609"), ("GFEX", "lc2609")],
+            [(item["venue"], item["symbol"], item["variety"], item["main_symbol"])
+             for item in result["data"]],
+            [("CFFEX", "IF2609", "沪深300股指", "MAIN:CFFEX:IF"),
+             ("SHFE", "cu2609", "沪铜", "MAIN:SHFE:CU"),
+             ("INE", "sc2609", "原油", "MAIN:INE:SC"),
+             ("CZCE", "SR609", "白糖", "MAIN:CZCE:SR"),
+             ("DCE", "i2609", "铁矿石", "MAIN:DCE:I"),
+             ("GFEX", "lc2609", "碳酸锂", "MAIN:GFEX:LC")],
         )
 
-    def test_future_bars_use_only_the_contract_exchange(self) -> None:
-        calls: list[dict[str, str]] = []
+    def test_future_contract_bars_use_sina_and_expand_czce_year(self) -> None:
+        calls: list[str] = []
 
-        def daily(**kwargs):
-            calls.append(kwargs)
+        def daily(symbol: str):
+            calls.append(symbol)
             return [
-                {"symbol": "IF2609", "date": "20260821", "close": 3930},
-                {"symbol": "IC2609", "date": "20260821", "close": 6100},
+                {"date": "2026-08-20", "open": 5900, "high": 6000, "low": 5880, "close": 5980},
+                {"date": "2026-08-21", "open": 5980, "high": 6050, "low": 5960, "close": 6030},
             ]
 
-        fake_akshare = SimpleNamespace(get_futures_daily=daily)
+        fake_akshare = SimpleNamespace(futures_zh_daily_sina=daily)
         with patch.dict(sys.modules, {"akshare": fake_akshare}):
             result = execute({
                 "operation": "bars",
                 "instrumentType": "future",
-                "providerSymbol": "CFFEX:IF2609",
+                "providerSymbol": "CZCE:AP610",
                 "interval": "1d",
-                "start": "2026-08-01",
+                "start": "2026-08-21",
                 "end": "2026-08-21",
                 "adjustment": "none",
-                "sourceOrder": ["shfe", "cffex", "ine", "czce"],
+                "sourceOrder": ["sina"],
             })
 
-        self.assertEqual(result["source"], "cffex")
+        self.assertEqual(result["source"], "sina")
         self.assertEqual(result["data"], [
-            {"symbol": "IF2609", "date": "20260821", "close": 3930},
+            {"date": "2026-08-21", "open": 5980, "high": 6050, "low": 5960, "close": 6030},
         ])
-        self.assertEqual(calls, [{
-            "start_date": "20260801", "end_date": "20260821",
-            "market": "CFFEX",
-        }])
+        self.assertEqual(calls, ["AP2610"])
 
-    def test_future_daily_snapshot_keeps_every_contract(self) -> None:
+    def test_future_main_bars_use_one_sina_range_request(self) -> None:
         calls: list[dict[str, str]] = []
 
-        def daily(**kwargs):
+        def main(**kwargs):
             calls.append(kwargs)
             return [
-                {"symbol": "i2609", "date": "20260821", "close": 801},
-                {"symbol": "i2610", "date": "20260821", "close": 790},
+                {"日期": "2026-08-20", "开盘价": 790, "最高价": 805, "最低价": 788, "收盘价": 801},
+                {"日期": "2026-08-21", "开盘价": 780, "最高价": 795, "最低价": 777, "收盘价": 790},
             ]
 
         with patch.dict(sys.modules, {
-            "akshare": SimpleNamespace(get_futures_daily=daily),
+            "akshare": SimpleNamespace(futures_main_sina=main),
         }):
             result = execute({
-                "operation": "futures_daily_snapshot",
-                "venue": "DCE",
-                "tradingDate": "2026-08-21",
+                "operation": "bars", "instrumentType": "future",
+                "providerSymbol": "MAIN:DCE:I", "interval": "1d",
+                "start": "2026-08-20", "end": "2026-08-21",
+                "adjustment": "none", "sourceOrder": ["sina"],
             })
 
         self.assertEqual(result, {
-            "source": "dce",
+            "source": "sina",
             "data": [
-                {"symbol": "i2609", "date": "20260821", "close": 801},
-                {"symbol": "i2610", "date": "20260821", "close": 790},
+                {"日期": "2026-08-20", "开盘价": 790, "最高价": 805, "最低价": 788, "收盘价": 801},
+                {"日期": "2026-08-21", "开盘价": 780, "最高价": 795, "最低价": 777, "收盘价": 790},
             ],
         })
         self.assertEqual(calls, [{
-            "start_date": "20260821", "end_date": "20260821", "market": "DCE",
+            "symbol": "I0", "start_date": "20260820", "end_date": "20260821",
         }])
 
 

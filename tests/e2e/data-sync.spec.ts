@@ -143,8 +143,8 @@ describe('local historical data synchronization', () => {
     }
   })
 
-  it('lists futures products and builds a main continuous series from exchange snapshots', async () => {
-    const requestedSnapshots: string[] = []
+  it('lists futures products and syncs each Sina main continuous range once', async () => {
+    const requestedSeries: string[] = []
     const provider: InstrumentProvider = {
       id: 'futures-snapshot-fixture',
       async listInstruments() {
@@ -153,28 +153,21 @@ describe('local historical data synchronization', () => {
           name: `${symbol.startsWith('i') ? '铁矿石' : '豆粕'} ${symbol}`, symbol,
           providerSymbol: `DCE:${symbol}`, venue: 'DCE', currency: 'CNY',
           status: 'active' as const, capabilities: ['bars' as const],
+          mainContinuousProviderSymbol: `MAIN:DCE:${symbol.startsWith('i') ? 'I' : 'M'}`,
         }))
       },
-      async getFuturesDailySnapshot(call) {
-        requestedSnapshots.push(`${call.venue}:${call.tradingDate}`)
-        const secondDay = call.tradingDate === '2026-08-21'
-        return [
-          {
-            source: 'dce', venue: 'DCE', symbol: 'i2609', tradingDate: call.tradingDate,
-            open: '790', high: '805', low: '788', close: '801', settlement: '800',
-            volume: 1200, turnover: null, openInterest: secondDay ? 4500 : 5500,
-          },
-          {
-            source: 'dce', venue: 'DCE', symbol: 'i2610', tradingDate: call.tradingDate,
-            open: '780', high: '795', low: '777', close: '790', settlement: '789',
-            volume: 900, turnover: null, openInterest: secondDay ? 5100 : 4300,
-          },
-          {
-            source: 'dce', venue: 'DCE', symbol: 'm2609', tradingDate: call.tradingDate,
-            open: '3000', high: '3050', low: '2980', close: '3020', settlement: '3010',
-            volume: 2000, turnover: null, openInterest: 8000,
-          },
-        ]
+      async getBars(call) {
+        requestedSeries.push(call.providerSymbol)
+        const rows = call.providerSymbol === 'MAIN:DCE:I'
+          ? [['2026-08-20', '801'], ['2026-08-21', '790']]
+          : [['2026-08-20', '3020'], ['2026-08-21', '3030']]
+        return rows.map(([tradingDate, close]) => ({
+          source: 'sina', interval: '1d' as const, tradingDate: tradingDate!,
+          periodStart: `${tradingDate}T00:00:00+08:00`,
+          periodEnd: `${tradingDate}T23:59:59+08:00`, currency: 'CNY',
+          open: close!, high: close!, low: close!, close: close!, volume: 100,
+          turnover: null, adjustment: 'none' as const, complete: true,
+        }))
       },
     }
     const server = await createEvaTickServer({ healthCheckIntervalMs: 0 })
@@ -206,7 +199,7 @@ describe('local historical data synchronization', () => {
       })
       expect(started.status).toBe(202)
       await waitForRun(server.url)
-      expect(requestedSnapshots).toEqual(['DCE:2026-08-20', 'DCE:2026-08-21'])
+      expect(requestedSeries).toEqual(['MAIN:DCE:I', 'MAIN:DCE:M'])
 
       const bars = await fetch(
         `${server.url}/v1/local-data/instruments/${encodeURIComponent(seriesId)}/bars?start=2026-08-20&end=2026-08-21&limit=20`,
@@ -220,18 +213,7 @@ describe('local historical data synchronization', () => {
       const members = await fetch(
         `${server.url}/v1/local-data/futures-series/${encodeURIComponent(seriesId)}/members`,
       )
-      expect(await members.json()).toMatchObject({
-        data: [
-          {
-            trading_date: '2026-08-20', contract_symbol: 'i2609',
-            selection_rule: 'same-day-max-open-interest-v1',
-          },
-          {
-            trading_date: '2026-08-21', contract_symbol: 'i2610',
-            selection_rule: 'same-day-max-open-interest-v1',
-          },
-        ],
-      })
+      expect(await members.json()).toMatchObject({ data: [] })
     } finally {
       await server.close()
     }

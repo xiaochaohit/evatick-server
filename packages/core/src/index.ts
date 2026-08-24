@@ -59,27 +59,6 @@ export interface BarsCall extends ProviderCall {
   adjustment: PriceAdjustment
 }
 
-export interface FuturesDailySnapshotCall {
-  venue: string
-  tradingDate: string
-  signal: AbortSignal
-}
-
-export interface ProviderFuturesDailyRow {
-  source?: string
-  venue: string
-  symbol: string
-  tradingDate: string
-  open: string
-  high: string
-  low: string
-  close: string
-  settlement: string | null
-  volume: number | null
-  turnover: string | null
-  openInterest: number | null
-}
-
 export interface ProviderAdjustmentFactor {
   source?: string
   effectiveDate: string
@@ -126,6 +105,7 @@ export interface ProviderInstrument {
   name: string
   symbol: string
   providerSymbol: string
+  mainContinuousProviderSymbol?: string
   venue?: string
   publisher?: string
   currency: string
@@ -150,9 +130,6 @@ export interface InstrumentProvider {
   getQuote?(call: ProviderCall): Promise<ProviderQuote>
   supportsBars?(call: Omit<BarsCall, 'signal'>): boolean
   getBars?(call: BarsCall): Promise<readonly ProviderBar[]>
-  getFuturesDailySnapshot?(
-    call: FuturesDailySnapshotCall,
-  ): Promise<readonly ProviderFuturesDailyRow[]>
   getAdjustmentFactors?(
     call: AdjustmentFactorsCall,
   ): Promise<readonly ProviderAdjustmentFactor[]>
@@ -190,6 +167,7 @@ export interface ProviderIdentifier {
   provider: string
   value: string
   capabilities: readonly InstrumentCapability[]
+  mainContinuousValue?: string
 }
 
 export interface CatalogInstrument {
@@ -270,6 +248,9 @@ export function buildInstrumentCatalog(
             provider: group.provider,
             value: candidate.providerSymbol,
             capabilities: [...candidate.capabilities].sort(),
+            ...(candidate.mainContinuousProviderSymbol
+              ? { mainContinuousValue: candidate.mainContinuousProviderSymbol }
+              : {}),
           },
         ]
         entries.set(instrumentId, {
@@ -305,6 +286,9 @@ export function buildInstrumentCatalog(
         provider: group.provider,
         value: candidate.providerSymbol,
         capabilities: [...candidate.capabilities].sort(),
+        ...(candidate.mainContinuousProviderSymbol
+          ? { mainContinuousValue: candidate.mainContinuousProviderSymbol }
+          : {}),
       })
     }
   }

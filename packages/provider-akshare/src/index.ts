@@ -11,12 +11,10 @@ import {
   type DataSourceCheckCall,
   type DataSourceCheckResult,
   type DataSourceCategory,
-  type FuturesDailySnapshotCall,
   type InstrumentProvider,
   type ProviderBar,
   type ProviderAdjustmentFactor,
   type ProviderConstituent,
-  type ProviderFuturesDailyRow,
   type ProviderInstrument,
   type ProviderQuote,
 } from '@evatick/core'
@@ -27,7 +25,6 @@ export type AkshareRequest =
   | { operation: 'list_stocks' }
   | { operation: 'list_indices' }
   | { operation: 'list_futures' }
-  | { operation: 'futures_daily_snapshot'; venue: string; tradingDate: string }
   | { operation: 'health'; source: string; instrumentType: 'equity' | 'index' | 'future' }
   | {
       operation: 'bars'
@@ -193,10 +190,11 @@ export class AkshareProvider implements InstrumentProvider {
   readonly dataSources = [
     {
       id: 'sina', name: '新浪财经',
-      categories: ['equity', 'index'],
+      categories: ['equity', 'index', 'future'],
       capabilities: {
         equity: ['日线', '分时', '行情快照', '复权因子'],
         index: ['日线', '分时', '行情快照'],
+        future: ['当前合约目录', '主力连续日线', '合约日线', '行情快照'],
       },
     },
     {
@@ -222,36 +220,6 @@ export class AkshareProvider implements InstrumentProvider {
         equity: ['日线', '行情快照'],
         index: ['日线', '行情快照'],
       },
-    },
-    {
-      id: 'cffex', name: '中国金融期货交易所',
-      categories: ['future'],
-      capabilities: { future: ['合约目录', '日线', '行情快照'] },
-    },
-    {
-      id: 'shfe', name: '上海期货交易所',
-      categories: ['future'],
-      capabilities: { future: ['合约目录', '日线', '行情快照'] },
-    },
-    {
-      id: 'ine', name: '上海国际能源交易中心',
-      categories: ['future'],
-      capabilities: { future: ['合约目录', '日线', '行情快照'] },
-    },
-    {
-      id: 'czce', name: '郑州商品交易所',
-      categories: ['future'],
-      capabilities: { future: ['合约目录', '日线', '行情快照'] },
-    },
-    {
-      id: 'dce', name: '大连商品交易所',
-      categories: ['future'],
-      capabilities: { future: ['合约目录', '日线', '行情快照'] },
-    },
-    {
-      id: 'gfex', name: '广州期货交易所',
-      categories: ['future'],
-      capabilities: { future: ['合约目录', '日线', '行情快照'] },
     },
   ] as const
   private readonly run: AkshareRunner
@@ -337,9 +305,11 @@ export class AkshareProvider implements InstrumentProvider {
         const venue = asText(pick(record, 'venue', '交易所'))?.toUpperCase()
         if (!symbol || !venue || !['CFFEX', 'SHFE', 'INE', 'CZCE', 'DCE', 'GFEX'].includes(venue)) return []
         const variety = asText(pick(record, 'variety', '品种', '品种名称', '产品名称'))?.trim()
+        const mainContinuousProviderSymbol = asText(record.main_symbol)?.trim()
         return [{
           type: 'future', market: 'CN', name: variety ? `${variety} ${symbol}` : symbol,
           symbol, providerSymbol: `${venue}:${symbol}`, venue,
+          ...(mainContinuousProviderSymbol ? { mainContinuousProviderSymbol } : {}),
           currency: 'CNY', status: 'active', capabilities: ['quote', 'bars'],
         }]
       }),
@@ -358,7 +328,7 @@ export class AkshareProvider implements InstrumentProvider {
       ? 'index'
       : 'equity'
     if (instrumentType === 'future' && call.interval !== '1d') {
-      throw new ProviderError('UNSUPPORTED_INTERVAL', 'official futures sources support daily bars', false)
+      throw new ProviderError('UNSUPPORTED_INTERVAL', 'Sina futures supports daily bars', false)
     }
     const result = await this.run({
       operation: 'bars',
@@ -373,10 +343,10 @@ export class AkshareProvider implements InstrumentProvider {
     return result.data.flatMap((record): ProviderBar[] => {
       const timestamp = asText(pick(record, 'day', '时间', 'datetime'))
       const rawDate = asText(pick(record, 'date', '日期')) ?? timestamp?.slice(0, 10)
-      const open = asText(pick(record, 'open', '开盘'))
-      const high = asText(pick(record, 'high', '最高'))
-      const low = asText(pick(record, 'low', '最低'))
-      const close = asText(pick(record, 'close', '收盘'))
+      const open = asText(pick(record, 'open', '开盘', '开盘价'))
+      const high = asText(pick(record, 'high', '最高', '最高价'))
+      const low = asText(pick(record, 'low', '最低', '最低价'))
+      const close = asText(pick(record, 'close', '收盘', '收盘价'))
       if (!rawDate || !open || !high || !low || !close) return []
       const date = isoDate(rawDate)
       const minutes = INTRADAY_MINUTES.get(
@@ -397,36 +367,6 @@ export class AkshareProvider implements InstrumentProvider {
         turnover: asText(pick(record, 'amount', '成交额')) ?? null,
         adjustment: call.adjustment,
         complete: minutes ? new Date(periodEnd).getTime() <= Date.now() : true,
-      }]
-    })
-  }
-
-  async getFuturesDailySnapshot(
-    call: FuturesDailySnapshotCall,
-  ): Promise<readonly ProviderFuturesDailyRow[]> {
-    const result = await this.run({
-      operation: 'futures_daily_snapshot',
-      venue: call.venue,
-      tradingDate: call.tradingDate,
-    }, call.signal)
-    return result.data.flatMap((record): ProviderFuturesDailyRow[] => {
-      const symbol = asText(pick(record, 'symbol', '合约代码', '合约'))?.trim()
-      const rawDate = asText(pick(record, 'date', '日期'))
-      const open = asText(pick(record, 'open', '开盘'))
-      const high = asText(pick(record, 'high', '最高'))
-      const low = asText(pick(record, 'low', '最低'))
-      const close = asText(pick(record, 'close', '收盘'))
-      if (!symbol || !rawDate || !open || !high || !low || !close) return []
-      return [{
-        source: result.source,
-        venue: call.venue.toUpperCase(),
-        symbol,
-        tradingDate: isoDate(rawDate),
-        open, high, low, close,
-        settlement: asText(pick(record, 'settle', 'settlement', '结算价')) ?? null,
-        volume: asNumber(pick(record, 'volume', '成交量')),
-        turnover: asText(pick(record, 'turnover', 'amount', '成交额')) ?? null,
-        openInterest: asNumber(pick(record, 'open_interest', 'openInterest', '持仓量')),
       }]
     })
   }

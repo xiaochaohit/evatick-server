@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -279,123 +280,99 @@ def _index_bars(
     raise ValueError(f"unsupported index bars source: {source}")
 
 
-FUTURES_VENUES = {
-    "cffex": "CFFEX",
-    "shfe": "SHFE",
-    "ine": "INE",
-    "czce": "CZCE",
-    "dce": "DCE",
-    "gfex": "GFEX",
+FUTURES_MARKETS = {
+    "中金所": "CFFEX",
+    "上期所": "SHFE",
+    "上期能源": "INE",
+    "郑商所": "CZCE",
+    "大商所": "DCE",
+    "广期所": "GFEX",
 }
 
 
-def _recent_contract_date() -> str:
-    current = datetime.now().date()
-    while current.weekday() >= 5:
-        current -= timedelta(days=1)
-    return current.strftime("%Y%m%d")
-
-
-def _future_contracts(akshare: Any, source: str) -> list[dict[str, Any]]:
-    if source not in FUTURES_VENUES:
-        raise ValueError(f"unsupported futures source: {source}")
-    date_value = _recent_contract_date()
-    if source == "cffex":
-        records = _records(akshare.futures_contract_info_cffex(date=date_value))
-    elif source == "shfe":
-        records = _records(akshare.futures_contract_info_shfe(date=date_value))
-    elif source == "ine":
-        records = _records(akshare.futures_contract_info_ine(date=date_value))
-    elif source == "czce":
-        records = _records(akshare.futures_contract_info_czce(date=date_value))
-    elif source == "dce":
-        records = _records(akshare.futures_contract_info_dce())
-    else:
-        records = _records(akshare.futures_contract_info_gfex())
-    venue = FUTURES_VENUES[source]
+def _future_contracts(akshare: Any) -> list[dict[str, Any]]:
+    records = _records(akshare.futures_hist_table_em())
     normalized: list[dict[str, Any]] = []
     for record in records:
-        symbol = record.get("合约代码", record.get("合约"))
-        if symbol is None or not str(symbol).strip():
+        symbol = str(record.get("合约代码", "")).strip()
+        venue = FUTURES_MARKETS.get(str(record.get("市场简称", "")).strip())
+        if not venue or not re.fullmatch(r"[A-Za-z]+\d{3,4}", symbol):
             continue
-        normalized_symbol = str(symbol).strip()
-        if source == "cffex" and re.search(r"-[CP]-\d+$", normalized_symbol, re.I):
-            continue
-        variety = record.get(
-            "品种",
-            record.get("品种名称", record.get("产品名称")),
-        )
+        name = str(record.get("合约中文代码", "")).strip()
+        variety = re.sub(r"\d{3,4}$", "", name).strip()
         normalized.append({
             **record,
-            "symbol": normalized_symbol,
-            "variety": None if variety is None else str(variety).strip(),
+            "symbol": symbol,
+            "variety": variety or None,
             "venue": venue,
         })
     return normalized
 
 
 def _list_futures(akshare: Any) -> dict[str, Any]:
-    records: list[dict[str, Any]] = []
-    errors: list[Exception] = []
-    for source in FUTURES_VENUES:
-        try:
-            records.extend(_future_contracts(akshare, source))
-        except Exception as error:
-            errors.append(error)
-    if not records:
-        raise SourcesExhausted(errors)
-    ine_symbols = {
-        str(record["symbol"]).upper()
-        for record in records
-        if record.get("venue") == "INE"
-    }
-    records = [
-        record
-        for record in records
-        if not (
-            record.get("venue") == "SHFE"
-            and str(record["symbol"]).upper() in ine_symbols
-        )
-    ]
-    return {"data": records, "source": "exchange"}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        contracts_request = executor.submit(_future_contracts, akshare)
+        main_request = executor.submit(akshare.futures_display_main_sina)
+        contracts_result = contracts_request.result()
+        main_result = _records(main_request.result())
+    main_symbols: dict[tuple[str, str], str] = {}
+    for record in main_result:
+        venue = str(record.get("exchange", "")).strip().upper()
+        symbol = str(record.get("symbol", "")).strip().upper()
+        if venue in FUTURES_MARKETS.values() and re.fullmatch(r"[A-Z]+0", symbol):
+            product = symbol[:-1]
+            main_symbols[(venue, product)] = f"MAIN:{venue}:{product}"
+    contracts = []
+    for record in contracts_result:
+        product_match = re.match(r"[A-Za-z]+", str(record["symbol"]))
+        product = product_match.group().upper() if product_match else ""
+        contracts.append({
+            **record,
+            "main_symbol": main_symbols.get((str(record["venue"]), product)),
+        })
+    return {"data": contracts, "source": "eastmoney-catalog+sina-main"}
+
+
+def _sina_contract_symbol(
+    venue: str, symbol: str, request: dict[str, Any]
+) -> str:
+    normalized = symbol.upper()
+    match = re.fullmatch(r"([A-Z]+)(\d)(\d{2})", normalized)
+    if venue != "CZCE" or not match:
+        return normalized
+    reference = request.get("end") or request.get("start")
+    reference_year = int(str(reference)[:4]) if reference else datetime.now().year
+    year_digit = int(match.group(2))
+    decade = reference_year // 10 * 10
+    year = min(
+        (decade - 10 + year_digit, decade + year_digit, decade + 10 + year_digit),
+        key=lambda candidate: abs(candidate - reference_year),
+    )
+    return f"{match.group(1)}{year % 100:02d}{match.group(3)}"
 
 
 def _future_bars(
     akshare: Any, request: dict[str, Any], source: str
 ) -> list[dict[str, Any]]:
-    venue, separator, symbol = request["providerSymbol"].partition(":")
-    expected_venue = FUTURES_VENUES.get(source)
-    if not separator or expected_venue != venue.upper():
-        raise ValueError(f"{source} does not publish {venue or 'unknown'} contracts")
+    if source != "sina":
+        raise ValueError(f"unsupported futures bars source: {source}")
     if request.get("interval", "1d") != "1d":
-        raise ValueError("official futures sources only support daily bars")
-    today = datetime.now().date()
-    start = _compact_date(
-        request.get("start"), (today - timedelta(days=21)).strftime("%Y%m%d")
-    )
-    end = _compact_date(request.get("end"), today.strftime("%Y%m%d"))
-    records = _records(akshare.get_futures_daily(
-        start_date=start, end_date=end, market=expected_venue,
+        raise ValueError("Sina futures supports daily bars only")
+    parts = str(request["providerSymbol"]).split(":")
+    if len(parts) == 3 and parts[0] == "MAIN":
+        product = parts[2].upper()
+        return _records(akshare.futures_main_sina(
+            symbol=f"{product}0",
+            start_date=_compact_date(request.get("start"), "19900101"),
+            end_date=_compact_date(request.get("end"), "20500101"),
+        ))
+    if len(parts) != 2:
+        raise ValueError("invalid futures provider symbol")
+    venue, symbol = parts
+    records = _records(akshare.futures_zh_daily_sina(
+        symbol=_sina_contract_symbol(venue.upper(), symbol, request),
     ))
-    return [
-        record for record in records
-        if str(record.get("symbol", "")).strip().upper() == symbol.upper()
-    ]
-
-
-def _future_daily_snapshot(
-    akshare: Any, venue: str, trading_date: str
-) -> dict[str, Any]:
-    normalized_venue = venue.upper()
-    if normalized_venue not in FUTURES_VENUES.values():
-        raise ValueError(f"unsupported futures venue: {venue}")
-    compact_date = _compact_date(trading_date, trading_date)
-    records = _records(akshare.get_futures_daily(
-        start_date=compact_date,
-        end_date=compact_date,
-        market=normalized_venue,
-    ))
-    return {"data": records, "source": normalized_venue.lower()}
+    return _filter_dates(records, request)
 
 
 def _market_data(
@@ -497,7 +474,11 @@ def _health_check(
     elif instrument_type == "future":
         if source not in SOURCE_ORDER["future_bars"]:
             raise ValueError(f"{source} does not support futures health checks")
-        records = _future_contracts(akshare, source)
+        records = _future_bars(akshare, {
+            "providerSymbol": "MAIN:CFFEX:IF", "interval": "1d",
+            "start": (today - timedelta(days=21)).isoformat(),
+            "end": today.isoformat(),
+        }, source)
     else:
         raise ValueError(f"unknown instrument type: {instrument_type}")
     if not records:
@@ -527,10 +508,6 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
         return {"data": _records(akshare.index_stock_info()), "source": "akshare"}
     if operation == "list_futures":
         return _list_futures(akshare)
-    if operation == "futures_daily_snapshot":
-        return _future_daily_snapshot(
-            akshare, request["venue"], request["tradingDate"]
-        )
     if operation == "health":
         return _health_check(
             akshare, request["source"], request["instrumentType"]

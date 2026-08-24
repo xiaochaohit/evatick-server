@@ -55,7 +55,7 @@ The server also provides:
 - Instrument listing, details, search, and context-aware resolution
 - Multi-source health checks, request timeouts, retries, and fallback
 - Background daily and one-minute bar synchronization, resume support, and daily schedules
-- Traceable unadjusted main continuous futures series, built per product from each day's listed contract with the greatest open interest (or volume when open interest is unavailable)
+- Unadjusted main continuous futures series from Sina's free daily feed; month contracts use the same daily source, while Eastmoney is used only for current contract discovery
 - API-key authentication and RFC 9457-style `application/problem+json` errors
 - Admin login, key management, local data browsing, sync controls, and provider status
 
@@ -243,6 +243,7 @@ The admin console is available by default at [http://127.0.0.1:8765/admin](http:
 
 - Local data browsing and coverage inspection
 - Manual historical-data sync, cancellation, resume, and daily schedules; futures synchronize as unadjusted main continuous series by product
+- The futures sync list includes only products for which Sina currently publishes a main continuous series; this upstream does not expose the selected contract for each day, so member history is unavailable
 - Provider health and scheduled checks
 - API-key creation, reveal, copy, and revocation
 - Administrator password and session management
