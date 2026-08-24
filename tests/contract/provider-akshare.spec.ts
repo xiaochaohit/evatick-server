@@ -184,6 +184,14 @@ describe('AKShare provider contract', () => {
     }
     const provider = new AkshareProvider({ runner })
 
+    expect(provider.resolveAdjustmentFactorSymbol({
+      instrumentId: 'cn:equity:XBSE:920071', type: 'equity', market: 'CN',
+      name: '金钛股份', symbol: '920071', venue: 'XBSE', currency: 'CNY', status: 'active',
+      aliases: ['920071.BJ'], capabilities: ['bars'], identifiers: [{
+        provider: 'hithink', value: 'equity:920071.BJ', capabilities: ['bars'],
+      }],
+    })).toBe('bj920071')
+
     await expect(provider.getAdjustmentFactors!({
       providerSymbol: 'sh600000', signal: new AbortController().signal,
     })).resolves.toEqual([

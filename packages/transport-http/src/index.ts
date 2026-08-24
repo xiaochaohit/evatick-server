@@ -363,6 +363,8 @@ export class EvaHttpService extends Service {
           capability: 'bars',
           ...routingOptions,
           supports: (provider) => typeof provider.getAdjustmentFactors === 'function',
+          resolveProviderSymbol: (provider, candidate) =>
+            provider.resolveAdjustmentFactorSymbol?.(candidate),
           invoke: (provider, providerSymbol, signal) => providerCalls.run(async () =>
             provider.getAdjustmentFactors!({ providerSymbol, signal })),
         })

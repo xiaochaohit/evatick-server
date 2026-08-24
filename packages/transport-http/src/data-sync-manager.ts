@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
+import { ProviderRoutingError } from '@evatick/core'
 
 import { BoundedExecutor } from './concurrency.js'
 
@@ -1648,17 +1649,12 @@ export class DataSyncManager {
         const start = storedRange && coveredStart && run.start >= coveredStart
           ? laterDate(run.start, subtractDays(storedRange.last, run.lookback_days))
           : run.start
-        const [result, adjustmentFactors] = await Promise.all([
-          this.dependencies.loadBars(instrument, {
-            interval: run.interval,
-            start,
-            end: run.end,
-            adjustment: 'none',
-          }),
-          instrument.type === 'equity' && run.interval === '1d'
-            ? this.dependencies.loadAdjustmentFactors(instrument)
-            : null,
-        ])
+        const result = await this.dependencies.loadBars(instrument, {
+          interval: run.interval,
+          start,
+          end: run.end,
+          adjustment: 'none',
+        })
         await this.writes.run(async () => {
           await this.upsertInstrument(instrument)
           await this.upsertBars(instrument, result, run.adjustment, run.interval)
@@ -1666,9 +1662,6 @@ export class DataSyncManager {
             await this.db.run(`
               DELETE FROM futures_series_members WHERE series_id = $series_id
             `, { series_id: instrument.instrumentId })
-          }
-          if (adjustmentFactors) {
-            await this.upsertAdjustmentFactors(instrument.instrumentId, adjustmentFactors)
           }
           await this.updateCoverage(
             instrument.instrumentId,
@@ -1678,6 +1671,18 @@ export class DataSyncManager {
             run.end,
           )
         })
+        if (instrument.type === 'equity' && run.interval === '1d') {
+          try {
+            const adjustmentFactors = await this.dependencies.loadAdjustmentFactors(instrument)
+            if (adjustmentFactors) {
+              await this.writes.run(() =>
+                this.upsertAdjustmentFactors(instrument.instrumentId, adjustmentFactors))
+            }
+          } catch (error) {
+            if (!(error instanceof ProviderRoutingError)) throw error
+            // Raw bars remain usable when a separate adjustment-factor source is unavailable.
+          }
+        }
         run.succeeded += 1
         run.bars_written += result.bars.length
         await this.updateRunItem(run.run_id, instrument.instrumentId, {

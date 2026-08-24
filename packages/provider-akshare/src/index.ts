@@ -7,6 +7,7 @@ import {
   ProviderError,
   type AdjustmentFactorsCall,
   type BarsCall,
+  type CatalogInstrument,
   type ConstituentsCall,
   type DataSourceCheckCall,
   type DataSourceCheckResult,
@@ -399,6 +400,18 @@ export class AkshareProvider implements InstrumentProvider {
         cumulativeFactor,
       }]
     })
+  }
+
+  resolveAdjustmentFactorSymbol(instrument: CatalogInstrument): string | undefined {
+    if (instrument.type !== 'equity' || instrument.market !== 'CN') return undefined
+    const prefix = instrument.venue === 'XSHG'
+      ? 'sh'
+      : instrument.venue === 'XSHE'
+        ? 'sz'
+        : instrument.venue === 'XBSE'
+          ? 'bj'
+          : undefined
+    return prefix ? `${prefix}${instrument.symbol}` : undefined
   }
 
   async getQuote(call: { providerSymbol: string; signal: AbortSignal }): Promise<ProviderQuote> {

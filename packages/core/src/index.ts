@@ -133,6 +133,7 @@ export interface InstrumentProvider {
   getAdjustmentFactors?(
     call: AdjustmentFactorsCall,
   ): Promise<readonly ProviderAdjustmentFactor[]>
+  resolveAdjustmentFactorSymbol?(instrument: CatalogInstrument): string | undefined
   supportsConstituents?(call: Omit<ConstituentsCall, 'signal'>): boolean
   getConstituents?(
     call: ConstituentsCall,
@@ -391,6 +392,10 @@ export async function routeInstrumentData<T>(options: {
   retryAttempts: number
   timeoutMs: number
   supports: (provider: InstrumentProvider, providerSymbol: string) => boolean
+  resolveProviderSymbol?: (
+    provider: InstrumentProvider,
+    instrument: CatalogInstrument,
+  ) => string | undefined
   invoke: (
     provider: InstrumentProvider,
     providerSymbol: string,
@@ -405,14 +410,16 @@ export async function routeInstrumentData<T>(options: {
         candidate.provider === provider.id &&
         candidate.capabilities.includes(options.capability),
     )
-    if (!identifier) continue
-    if (!options.supports(provider, identifier.value)) continue
+    const providerSymbol = identifier?.value ??
+      options.resolveProviderSymbol?.(provider, options.instrument)
+    if (!providerSymbol) continue
+    if (!options.supports(provider, providerSymbol)) continue
 
     for (let attempt = 0; attempt < options.retryAttempts; attempt += 1) {
       totalAttempts += 1
       try {
         const value = await withProviderTimeout(options.timeoutMs, (signal) => {
-          const result = options.invoke(provider, identifier.value, signal)
+          const result = options.invoke(provider, providerSymbol, signal)
           if (!result) {
             throw new ProviderError(
               'CAPABILITY_UNAVAILABLE',

@@ -18,6 +18,70 @@ async function waitForRun(url: string) {
 }
 
 describe('equity adjustment factors', () => {
+  it('stores raw bars independently and resolves missing factor identifiers through the factor provider', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'eva-independent-factors-'))
+    const factorSymbols: string[] = []
+    const barsProvider: InstrumentProvider = {
+      id: 'hithink-fixture',
+      async listInstruments() {
+        return ['920071', '920072'].map((symbol) => ({
+          type: 'equity' as const, market: 'CN' as const, name: `股票${symbol}`, symbol,
+          providerSymbol: `equity:${symbol}.BJ`, venue: 'XBSE', currency: 'CNY',
+          status: 'active' as const, capabilities: ['bars' as const],
+        }))
+      },
+      async getBars(call) {
+        return [{
+          source: 'fuyao', interval: call.interval, tradingDate: '2026-08-24',
+          periodStart: '2026-08-24T00:00:00+08:00',
+          periodEnd: '2026-08-24T23:59:59+08:00', currency: 'CNY',
+          open: '10', high: '11', low: '9', close: '10.5', volume: 100,
+          turnover: '1000', adjustment: call.adjustment, complete: true,
+        }]
+      },
+    }
+    const factorProvider: InstrumentProvider = {
+      id: 'akshare-fixture',
+      async listInstruments() { return [] },
+      resolveAdjustmentFactorSymbol(instrument) {
+        return `bj${instrument.symbol}`
+      },
+      async getAdjustmentFactors(call) {
+        factorSymbols.push(call.providerSymbol)
+        if (call.providerSymbol === 'bj920072') throw new Error('SINA_FACTOR_UNAVAILABLE')
+        return [{ source: 'sina', effectiveDate: '1990-01-01', cumulativeFactor: '1' }]
+      },
+    }
+    const server = await createEvaTickServer({
+      historyPath: join(directory, 'history.duckdb'), healthCheckIntervalMs: 0,
+    })
+    await server.mountProvider(barsProvider)
+    await server.mountProvider(factorProvider)
+
+    try {
+      const started = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['equity'], interval: '1d',
+          start: '2026-08-24', end: '2026-08-24', adjustment: 'none',
+        }),
+      })
+      expect(started.status).toBe(202)
+      const completed = await waitForRun(server.url)
+      expect(completed.last_run).toMatchObject({
+        status: 'completed', succeeded: 2, failed: 0, bars_written: 2,
+      })
+      const status = await fetch(`${server.url}/v1/data-sync`).then((response) => response.json())
+      expect(status).toMatchObject({
+        data: { storage: { daily_bars: 2, adjustment_factors: 1 } },
+      })
+      expect(factorSymbols).toEqual(['bj920071', 'bj920072', 'bj920072'])
+    } finally {
+      await server.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('serializes cache writes while keeping provider requests concurrently bounded', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'eva-concurrent-factors-'))
     const symbols = Array.from({ length: 8 }, (_, index) => `60000${index}`)
