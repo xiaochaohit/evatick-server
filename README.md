@@ -15,7 +15,7 @@
 
 EVA Tick Server（`evatickd`）将分散、异构的市场数据转换为适合大模型理解和调用的规范化、可读、版本化 JSON。它维护规范金融标的目录，完成搜索与解析、查询路由、超时重试、数据源回退和结果规范化，并通过 HTTP API 服务 EVA CLI、AI Agent 与其他自动化客户端。
 
-当前版本覆盖中国内地 A 股、上交所/深交所/中证指数、六家中国期货交易所，以及按交易所隔离的 Binance 和 Coinbase 加密货币。AKShare 是首个数据提供方，但不是服务的产品边界。
+当前版本覆盖中国内地 A 股、上交所/深交所/中证指数、六家中国期货交易所，以及按交易所隔离的 Binance 和 Coinbase 加密货币。同花顺扶摇提供官方 A 股与指数目录、快照和日线，AKShare 补充分钟线、复权因子与期货能力；任何单一数据提供方都不是服务的产品边界。
 
 <!-- 媒体位：将快速演示 GIF/WebP 放在 docs/assets/evatick-demo.webp，然后取消下一行注释。 -->
 <!-- ![EVA Tick Server 快速演示](docs/assets/evatick-demo.webp) -->
@@ -94,9 +94,20 @@ chmod 600 ./evatickd.config.json
 
 1. 将 `admin.initialPassword` 替换为至少 8 个字符的私密初始密码。
 2. 将 `providers.akshare.pythonExecutable` 改为刚创建的虚拟环境 Python 的绝对路径。
-3. 本地开发时，将 `storage` 和 `admin` 下的 `/var/lib/evatickd/...` 路径改为当前用户可写的路径，例如 `./data/...`。
+3. 将同花顺扶摇 API Key 放入 `HITHINK_FINANCE_API_KEY` 环境变量；配置文件只保存 `apiKeyEnvironment`，不得保存 Key 本身。不使用同花顺时可删除 `providers.hithink` 配置段。
+4. 本地开发时，将 `storage` 和 `admin` 下的 `/var/lib/evatickd/...` 路径改为当前用户可写的路径，例如 `./data/...`。
 
 配置文件中的相对路径以配置文件所在目录为基准。当文件包含 `admin.initialPassword` 时，Unix 系统要求其权限为 `0600`。
+
+macOS 可把 Key 保存在钥匙串，并仅在启动进程时注入：
+
+```shell
+export HITHINK_FINANCE_API_KEY="$(security find-generic-password \
+  -a "$USER" -s cn.evatick.provider.hithink -w)"
+```
+
+systemd 部署可在权限为 `0600` 的 `/etc/evatickd/provider.env` 中配置
+`HITHINK_FINANCE_API_KEY=<your-api-key>`；示例 service 会读取该文件，但不会把它纳入仓库。
 
 ### 4. 启动服务
 
@@ -189,10 +200,10 @@ SQLite 标的目录       DuckDB 历史仓库
 Cordis 数据提供方插件
      │
      ▼
-AKShare Python 桥接进程 · 公共加密货币 REST API
+同花顺扶摇 REST API · AKShare Python 桥接进程 · 公共加密货币 REST API
      │
      ▼
-新浪 · 东方财富 · 腾讯财经 · BaoStock · Binance · Coinbase
+同花顺扶摇 · 新浪 · 东方财富 · 腾讯财经 · BaoStock · Binance · Coinbase
 ```
 
 CLI 与服务端只通过 HTTP API 通信，不依赖服务端实现代码。数据提供方插件由 Cordis 管理生命周期；Python 数据桥接运行在独立进程中。
@@ -207,6 +218,7 @@ CLI 与服务端只通过 HTTP API 通信，不依赖服务端实现代码。数
 | `packages/catalog-sqlite` | SQLite 标的目录实现 |
 | `packages/cordis-runtime` | Cordis 插件运行时集成 |
 | `packages/provider-akshare` | AKShare 数据提供方插件 |
+| `packages/provider-hithink` | 同花顺扶摇 REST API 数据提供方插件 |
 | `packages/provider-crypto` | Binance 与 Coinbase 公共行情数据提供方插件 |
 | `providers/akshare-python` | 进程隔离的 Python 数据桥接 |
 | `contracts/openapi` | 公开 HTTP API 契约 |

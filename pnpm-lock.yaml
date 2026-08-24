@@ -20,6 +20,9 @@ importers:
       '@evatick/provider-crypto':
         specifier: workspace:*
         version: link:packages/provider-crypto
+      '@evatick/provider-hithink':
+        specifier: workspace:*
+        version: link:packages/provider-hithink
       '@evatick/server':
         specifier: workspace:*
         version: link:apps/evatick-server
@@ -56,6 +59,9 @@ importers:
       '@evatick/provider-crypto':
         specifier: workspace:*
         version: link:../../packages/provider-crypto
+      '@evatick/provider-hithink':
+        specifier: workspace:*
+        version: link:../../packages/provider-hithink
       '@evatick/transport-http':
         specifier: workspace:*
         version: link:../../packages/transport-http
@@ -84,6 +90,12 @@ importers:
         version: link:../core
 
   packages/provider-crypto:
+    dependencies:
+      '@evatick/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/provider-hithink:
     dependencies:
       '@evatick/core':
         specifier: workspace:*

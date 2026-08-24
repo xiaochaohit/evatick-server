@@ -32,6 +32,10 @@ function configuration() {
     },
     providers: {
       akshare: { pythonExecutable: './python/bin/python' },
+      hithink: {
+        baseUrl: 'https://fuyao.aicubes.cn/',
+        apiKeyEnvironment: 'HITHINK_FINANCE_API_KEY',
+      },
     },
   }
 }
@@ -53,6 +57,10 @@ describe('EVA daemon configuration', () => {
       expect(loaded.storage.dataSourcePreferencesPath).toBe(join(directory, 'data/data-source-preferences.json'))
       expect(loaded.admin.credentialsPath).toBe(join(directory, 'data/admin-credentials.json'))
       expect(loaded.providers.akshare.pythonExecutable).toBe(join(directory, 'python/bin/python'))
+      expect(loaded.providers.hithink).toEqual({
+        baseUrl: 'https://fuyao.aicubes.cn',
+        apiKeyEnvironment: 'HITHINK_FINANCE_API_KEY',
+      })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -75,6 +83,11 @@ describe('EVA daemon configuration', () => {
       tooShort.admin.initialPassword = 'short7!'
       await writeFile(path, JSON.stringify(tooShort), { mode: 0o600 })
       await expect(loadEvaDaemonConfiguration(path)).rejects.toThrow('8 to 256 characters')
+
+      const invalidEnvironment = configuration()
+      invalidEnvironment.providers.hithink.apiKeyEnvironment = 'not-valid'
+      await writeFile(path, JSON.stringify(invalidEnvironment), { mode: 0o600 })
+      await expect(loadEvaDaemonConfiguration(path)).rejects.toThrow('uppercase environment variable')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

@@ -21,6 +21,7 @@
     "@evatick/server": "workspace:*",
     "@evatick/provider-akshare": "workspace:*",
     "@evatick/provider-crypto": "workspace:*",
+    "@evatick/provider-hithink": "workspace:*",
     "@types/node": "24.10.1",
     "tsx": "4.22.4",
     "typescript": "6.0.3",

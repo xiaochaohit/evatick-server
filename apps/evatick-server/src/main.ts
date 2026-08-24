@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 
 import { AkshareProvider } from '@evatick/provider-akshare'
 import { BinanceProvider, CoinbaseProvider } from '@evatick/provider-crypto'
+import { HithinkProvider } from '@evatick/provider-hithink'
 
 import {
   assertPythonExecutable,
@@ -13,6 +14,14 @@ import { createEvaTickServer } from './index.js'
 
 export async function startEvaTickDaemon(configurationPath: string) {
   const configuration = await loadEvaDaemonConfiguration(configurationPath)
+  const hithinkApiKey = configuration.providers.hithink
+    ? process.env[configuration.providers.hithink.apiKeyEnvironment]
+    : undefined
+  if (configuration.providers.hithink && !hithinkApiKey) {
+    throw new Error(
+      `configured HiThink API key environment variable is missing: ${configuration.providers.hithink.apiKeyEnvironment}`,
+    )
+  }
   await mkdir(dirname(configuration.storage.catalogPath), { recursive: true })
   await mkdir(dirname(configuration.storage.historyPath), { recursive: true })
   await mkdir(dirname(configuration.storage.dataSourcePreferencesPath), { recursive: true })
@@ -35,6 +44,12 @@ export async function startEvaTickDaemon(configurationPath: string) {
     healthCheckIntervalMs: configuration.server.healthCheckIntervalSeconds * 1_000,
     healthCheckTimeoutMs: configuration.server.healthCheckTimeoutMs,
   })
+  if (configuration.providers.hithink && hithinkApiKey) {
+    await server.mountProvider(new HithinkProvider({
+      apiKey: hithinkApiKey,
+      baseUrl: configuration.providers.hithink.baseUrl,
+    }))
+  }
   await server.mountProvider(new AkshareProvider({
     pythonExecutable: configuration.providers.akshare.pythonExecutable,
   }))

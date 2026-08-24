@@ -148,6 +148,7 @@ export interface InstrumentProvider {
   ): Promise<void> | void
   close?(): Promise<void> | void
   getQuote?(call: ProviderCall): Promise<ProviderQuote>
+  supportsBars?(call: Omit<BarsCall, 'signal'>): boolean
   getBars?(call: BarsCall): Promise<readonly ProviderBar[]>
   getFuturesDailySnapshot?(
     call: FuturesDailySnapshotCall,
@@ -155,6 +156,7 @@ export interface InstrumentProvider {
   getAdjustmentFactors?(
     call: AdjustmentFactorsCall,
   ): Promise<readonly ProviderAdjustmentFactor[]>
+  supportsConstituents?(call: Omit<ConstituentsCall, 'signal'>): boolean
   getConstituents?(
     call: ConstituentsCall,
   ): Promise<readonly ProviderConstituent[]>
@@ -404,7 +406,7 @@ export async function routeInstrumentData<T>(options: {
   capability: InstrumentCapability
   retryAttempts: number
   timeoutMs: number
-  supports: (provider: InstrumentProvider) => boolean
+  supports: (provider: InstrumentProvider, providerSymbol: string) => boolean
   invoke: (
     provider: InstrumentProvider,
     providerSymbol: string,
@@ -420,7 +422,7 @@ export async function routeInstrumentData<T>(options: {
         candidate.capabilities.includes(options.capability),
     )
     if (!identifier) continue
-    if (!options.supports(provider)) continue
+    if (!options.supports(provider, identifier.value)) continue
 
     for (let attempt = 0; attempt < options.retryAttempts; attempt += 1) {
       totalAttempts += 1

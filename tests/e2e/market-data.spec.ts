@@ -7,6 +7,60 @@ import {
 } from '@evatick/server'
 
 describe('provider routing over HTTP', () => {
+  it('skips a daily-only provider for minute bars', async () => {
+    let dailyProviderCalls = 0
+    const dailyOnly: InstrumentProvider = {
+      id: 'daily-only',
+      async listInstruments() {
+        return [{
+          type: 'equity', market: 'CN', name: '浦发银行', symbol: '600000',
+          providerSymbol: 'equity:600000.SH', venue: 'XSHG', currency: 'CNY',
+          status: 'active', capabilities: ['bars'],
+        }]
+      },
+      supportsBars(call) { return call.interval === '1d' },
+      async getBars() {
+        dailyProviderCalls += 1
+        throw new Error('daily-only provider should have been skipped')
+      },
+    }
+    const minuteProvider: InstrumentProvider = {
+      id: 'minute-provider',
+      async listInstruments() {
+        return [{
+          type: 'equity', market: 'CN', name: '浦发银行', symbol: '600000',
+          providerSymbol: 'sh600000', venue: 'XSHG', currency: 'CNY',
+          status: 'active', capabilities: ['bars'],
+        }]
+      },
+      async getBars() {
+        return [{
+          source: 'minute-source', interval: '1m', tradingDate: '2026-08-24',
+          periodStart: '2026-08-24T09:30:00+08:00',
+          periodEnd: '2026-08-24T09:31:00+08:00', currency: 'CNY',
+          open: '10', high: '10.1', low: '9.9', close: '10.05',
+          volume: 100, turnover: '1005', adjustment: 'none', complete: true,
+        }]
+      },
+    }
+    const server = await createEvaTickServer()
+    await server.mountProvider(dailyOnly)
+    await server.mountProvider(minuteProvider)
+    try {
+      const response = await fetch(
+        `${server.url}/v1/instruments/${encodeURIComponent('cn:equity:XSHG:600000')}/bars?interval=1m&start=2026-08-24&end=2026-08-24`,
+      )
+      expect(response.status).toBe(200)
+      expect(dailyProviderCalls).toBe(0)
+      expect(await response.json()).toMatchObject({
+        data: [{ interval: '1m', close: '10.05' }],
+        meta: { sources: [{ provider: 'minute-provider', upstream: 'minute-source' }] },
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
   it('serves canonical mainland futures from an official exchange source', async () => {
     let barRequests = 0
     const provider: InstrumentProvider = {

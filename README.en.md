@@ -15,7 +15,7 @@ English · [简体中文](README.md)
 
 EVA Tick Server (`evatickd`) turns fragmented, provider-specific market data into normalized, readable, versioned JSON designed for large language models and tool-using agents. It maintains a canonical instrument catalog, performs search and resolution, routes requests with timeouts and fallback, and serves the EVA CLI and other automated clients through HTTP.
 
-The current release covers mainland China A-shares; Shanghai, Shenzhen, and CSI indices; all six mainland China futures exchanges; and exchange-scoped Binance and Coinbase cryptocurrency markets. AKShare is the first data provider, but it does not define the product boundary.
+The current release covers mainland China A-shares; Shanghai, Shenzhen, and CSI indices; all six mainland China futures exchanges; and exchange-scoped Binance and Coinbase cryptocurrency markets. HiThink Fuyao supplies official A-share and index catalogs, snapshots, and daily bars, while AKShare supplements minute bars, adjustment factors, and futures data; no single provider defines the product boundary.
 
 <!-- Media slot: add a demo GIF/WebP at docs/assets/evatick-demo.webp, then uncomment the next line. -->
 <!-- ![EVA Tick Server demo](docs/assets/evatick-demo.webp) -->
@@ -95,9 +95,21 @@ Edit `evatickd.config.json`:
 
 1. Replace `admin.initialPassword` with a private initial password of at least eight characters.
 2. Set `providers.akshare.pythonExecutable` to the absolute path of the virtual-environment Python created above.
-3. For local development, replace the `/var/lib/evatickd/...` paths under `storage` and `admin` with paths writable by your user, such as `./data/...`.
+3. Put the HiThink Fuyao API key in `HITHINK_FINANCE_API_KEY`. The configuration stores only `apiKeyEnvironment`, never the key itself. Remove `providers.hithink` when HiThink is not enabled.
+4. For local development, replace the `/var/lib/evatickd/...` paths under `storage` and `admin` with paths writable by your user, such as `./data/...`.
 
 Relative paths are resolved from the configuration file's directory. On Unix, a configuration containing `admin.initialPassword` must have mode `0600`.
+
+On macOS, the key can remain in Keychain and be injected only when the daemon starts:
+
+```shell
+export HITHINK_FINANCE_API_KEY="$(security find-generic-password \
+  -a "$USER" -s cn.evatick.provider.hithink -w)"
+```
+
+For systemd, place `HITHINK_FINANCE_API_KEY=<your-api-key>` in the mode-`0600`
+file `/etc/evatickd/provider.env`. The example service reads this file without
+placing it in the repository.
 
 ### 4. Start the server
 
@@ -190,10 +202,10 @@ SQLite instrument catalog      DuckDB history store
 Cordis provider plugins
      │
      ▼
-AKShare Python bridge process · public cryptocurrency REST APIs
+HiThink Fuyao REST API · AKShare Python bridge process · public cryptocurrency REST APIs
      │
      ▼
-Sina · Eastmoney · Tencent Finance · BaoStock · Binance · Coinbase
+HiThink Fuyao · Sina · Eastmoney · Tencent Finance · BaoStock · Binance · Coinbase
 ```
 
 The CLI communicates with the server exclusively through HTTP and does not depend on server implementation code. Cordis manages provider-plugin lifecycles, while the Python data bridge runs in an isolated process.
@@ -208,6 +220,7 @@ The CLI communicates with the server exclusively through HTTP and does not depen
 | `packages/catalog-sqlite` | SQLite instrument-catalog implementation |
 | `packages/cordis-runtime` | Cordis plugin-runtime integration |
 | `packages/provider-akshare` | AKShare provider plugin |
+| `packages/provider-hithink` | HiThink Fuyao REST API provider plugin |
 | `packages/provider-crypto` | Public Binance and Coinbase market-data provider plugins |
 | `providers/akshare-python` | Process-isolated Python data bridge |
 | `contracts/openapi` | Public HTTP API contract |

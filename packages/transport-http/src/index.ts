@@ -197,7 +197,15 @@ export class EvaHttpService extends Service {
       instrument,
       capability: 'bars',
       ...routingOptions,
-      supports: (provider) => typeof provider.getBars === 'function',
+      supports: (provider, providerSymbol) =>
+        typeof provider.getBars === 'function' &&
+        (provider.supportsBars?.({
+          providerSymbol,
+          interval: request.interval,
+          start: request.start,
+          end: request.end,
+          adjustment: 'none',
+        }) ?? true),
       invoke: (provider, providerSymbol, signal) => providerCalls.run(async () =>
         provider.getBars!({
           providerSymbol,
@@ -1636,8 +1644,12 @@ export class EvaHttpService extends Service {
             instrument,
             capability: 'constituents',
             ...routingOptions,
-            supports: (provider) =>
-              typeof provider.getConstituents === 'function',
+            supports: (provider, providerSymbol) =>
+              typeof provider.getConstituents === 'function' &&
+              (provider.supportsConstituents?.({
+                providerSymbol,
+                asOf: request.query.as_of,
+              }) ?? true),
             invoke: (provider, providerSymbol, signal) => providerCalls.run(async () =>
               provider.getConstituents!({
                 providerSymbol,

@@ -28,6 +28,10 @@ export interface EvaDaemonConfiguration {
     akshare: {
       pythonExecutable: string
     }
+    hithink?: {
+      baseUrl: string
+      apiKeyEnvironment: string
+    }
   }
 }
 
@@ -81,9 +85,15 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
   const admin = objectAt(root.admin, 'configuration.admin')
   rejectUnknownKeys(admin, ['username', 'initialPassword', 'credentialsPath', 'apiKeysPath'], 'configuration.admin')
   const providers = objectAt(root.providers, 'configuration.providers')
-  rejectUnknownKeys(providers, ['akshare'], 'configuration.providers')
+  rejectUnknownKeys(providers, ['akshare', 'hithink'], 'configuration.providers')
   const akshare = objectAt(providers.akshare, 'configuration.providers.akshare')
   rejectUnknownKeys(akshare, ['pythonExecutable'], 'configuration.providers.akshare')
+  const hithink = providers.hithink === undefined
+    ? undefined
+    : objectAt(providers.hithink, 'configuration.providers.hithink')
+  if (hithink) {
+    rejectUnknownKeys(hithink, ['baseUrl', 'apiKeyEnvironment'], 'configuration.providers.hithink')
+  }
 
   const username = stringAt(admin.username, 'configuration.admin.username', 64).trim()
   const initialPassword = admin.initialPassword
@@ -134,8 +144,29 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
       akshare: {
         pythonExecutable: configuredPath(akshare.pythonExecutable, 'configuration.providers.akshare.pythonExecutable', configurationDirectory),
       },
+      ...(hithink ? {
+        hithink: {
+          baseUrl: stringAt(
+            hithink.baseUrl ?? 'https://fuyao.aicubes.cn',
+            'configuration.providers.hithink.baseUrl',
+            2_048,
+          ).replace(/\/$/, ''),
+          apiKeyEnvironment: environmentNameAt(
+            hithink.apiKeyEnvironment ?? 'HITHINK_FINANCE_API_KEY',
+            'configuration.providers.hithink.apiKeyEnvironment',
+          ),
+        },
+      } : {}),
     },
   }
+}
+
+function environmentNameAt(value: unknown, path: string): string {
+  const name = stringAt(value, path, 128)
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+    throw new Error(`${path} must be an uppercase environment variable name`)
+  }
+  return name
 }
 
 async function assertPrivateWhenPasswordConfigured(path: string, configuration: EvaDaemonConfiguration): Promise<void> {
