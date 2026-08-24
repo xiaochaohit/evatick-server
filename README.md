@@ -94,20 +94,74 @@ chmod 600 ./evatickd.config.json
 
 1. 将 `admin.initialPassword` 替换为至少 8 个字符的私密初始密码。
 2. 将 `providers.akshare.pythonExecutable` 改为刚创建的虚拟环境 Python 的绝对路径。
-3. 将同花顺扶摇 API Key 放入 `HITHINK_FINANCE_API_KEY` 环境变量；配置文件只保存 `apiKeyEnvironment`，不得保存 Key 本身。不使用同花顺时可删除 `providers.hithink` 配置段。
+3. 按下方说明申请并配置同花顺扶摇 API Key。不使用同花顺时可删除 `providers.hithink` 配置段。
 4. 本地开发时，将 `storage` 和 `admin` 下的 `/var/lib/evatickd/...` 路径改为当前用户可写的路径，例如 `./data/...`。
 
 配置文件中的相对路径以配置文件所在目录为基准。当文件包含 `admin.initialPassword` 时，Unix 系统要求其权限为 `0600`。
 
-macOS 可把 Key 保存在钥匙串，并仅在启动进程时注入：
+#### 配置同花顺扶摇 Provider
+
+1. 访问[同花顺金融数据服务 API Key 管理页面](https://fuyao.aicubes.cn/admin/)，注册或登录后创建统一 API Key。产品说明与接口文档分别见[同花顺金融数据服务官网](https://fuyao.aicubes.cn/)和[在线文档](https://fuyao.aicubes.cn/docs/)。
+2. 在配置文件的 `providers` 中启用 `hithink`。`apiKeyEnvironment` 是保存 Key 的环境变量名，不是 Key 本身：
+
+   ```json
+   {
+     "providers": {
+       "hithink": {
+         "baseUrl": "https://fuyao.aicubes.cn",
+         "apiKeyEnvironment": "HITHINK_FINANCE_API_KEY"
+       },
+       "akshare": {
+         "pythonExecutable": "/absolute/path/to/providers/akshare-python/.venv/bin/python"
+       }
+     }
+   }
+   ```
+
+3. 将申请到的 Key 注入 `HITHINK_FINANCE_API_KEY`。不要把真实 Key 写入 JSON、源码、README、日志或 Git 仓库。
+
+macOS 可先把 Key 保存在钥匙串，再仅向启动进程注入：
 
 ```shell
 export HITHINK_FINANCE_API_KEY="$(security find-generic-password \
   -a "$USER" -s cn.evatick.provider.hithink -w)"
 ```
 
-systemd 部署可在权限为 `0600` 的 `/etc/evatickd/provider.env` 中配置
-`HITHINK_FINANCE_API_KEY=<your-api-key>`；示例 service 会读取该文件，但不会把它纳入仓库。
+也可以在当前终端中隐藏输入，避免将 Key 直接写进 shell 历史：
+
+```shell
+read -rsp 'HiThink API Key: ' HITHINK_FINANCE_API_KEY && echo
+export HITHINK_FINANCE_API_KEY
+```
+
+systemd 部署时，创建仅 root 可读的环境文件：
+
+```shell
+sudo install -o root -g root -m 0600 /dev/null /etc/evatickd/provider.env
+sudoedit /etc/evatickd/provider.env
+```
+
+在编辑器中写入下面一行并将占位符替换为真实 Key：
+
+```dotenv
+HITHINK_FINANCE_API_KEY=<your-api-key>
+```
+
+仓库提供的 [`deploy/evatickd.service`](deploy/evatickd.service) 已通过
+`EnvironmentFile=-/etc/evatickd/provider.env` 读取该文件。修改后执行：
+
+```shell
+sudo systemctl daemon-reload
+sudo systemctl restart evatickd
+sudo systemctl is-active evatickd
+curl --fail --silent --show-error http://127.0.0.1:8765/v1/health
+```
+
+服务正常启动后，可登录管理中心的“数据源管理”页面，确认“同花顺扶摇”已出现并执行健康检查。若启动时报
+`configured HiThink API key environment variable is missing`，说明配置中的环境变量名与进程实际收到的变量不一致。
+
+> [!IMPORTANT]
+> `HITHINK_FINANCE_API_KEY` 用于 EVA Tick Server 访问同花顺上游；后文通过管理中心创建的 `EVA_API_KEY` 用于客户端访问 EVA Tick Server。两者用途不同，不应混用。
 
 ### 4. 启动服务
 
