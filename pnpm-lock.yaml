@@ -17,6 +17,9 @@ importers:
       '@evatick/provider-akshare':
         specifier: workspace:*
         version: link:packages/provider-akshare
+      '@evatick/provider-amazingdata':
+        specifier: workspace:*
+        version: link:packages/provider-amazingdata
       '@evatick/provider-crypto':
         specifier: workspace:*
         version: link:packages/provider-crypto
@@ -56,6 +59,9 @@ importers:
       '@evatick/provider-akshare':
         specifier: workspace:*
         version: link:../../packages/provider-akshare
+      '@evatick/provider-amazingdata':
+        specifier: workspace:*
+        version: link:../../packages/provider-amazingdata
       '@evatick/provider-crypto':
         specifier: workspace:*
         version: link:../../packages/provider-crypto
@@ -84,6 +90,12 @@ importers:
   packages/core: {}
 
   packages/provider-akshare:
+    dependencies:
+      '@evatick/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/provider-amazingdata:
     dependencies:
       '@evatick/core':
         specifier: workspace:*

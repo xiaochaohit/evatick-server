@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evatick-server-amazingdata"
+version = "0.1.0"
+description = "Persistent AmazingData provider bridge for EVA"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["evatick_server_amazingdata*"]

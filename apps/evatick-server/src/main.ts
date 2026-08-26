@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { AkshareProvider } from '@evatick/provider-akshare'
+import { AmazingDataProvider } from '@evatick/provider-amazingdata'
 import { BinanceProvider, CoinbaseProvider } from '@evatick/provider-crypto'
 import { HithinkProvider } from '@evatick/provider-hithink'
 
@@ -22,12 +23,40 @@ export async function startEvaTickDaemon(configurationPath: string) {
       `configured HiThink API key environment variable is missing: ${configuration.providers.hithink.apiKeyEnvironment}`,
     )
   }
+  const amazingdata = configuration.providers.amazingdata
+  const amazingdataEnvironment = amazingdata
+    ? {
+        username: process.env[amazingdata.usernameEnvironment],
+        password: process.env[amazingdata.passwordEnvironment],
+        host: process.env[amazingdata.hostEnvironment],
+        port: process.env[amazingdata.portEnvironment],
+      }
+    : undefined
+  if (amazingdata && amazingdataEnvironment) {
+    for (const [field, value] of Object.entries(amazingdataEnvironment)) {
+      if (!value) {
+        const environmentName = amazingdata[`${field}Environment` as
+          'usernameEnvironment' | 'passwordEnvironment' | 'hostEnvironment' | 'portEnvironment']
+        throw new Error(`configured AmazingData environment variable is missing: ${environmentName}`)
+      }
+    }
+    const port = Number(amazingdataEnvironment.port)
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(`configured AmazingData port environment variable is invalid: ${amazingdata.portEnvironment}`)
+    }
+  }
   await mkdir(dirname(configuration.storage.catalogPath), { recursive: true })
   await mkdir(dirname(configuration.storage.historyPath), { recursive: true })
   await mkdir(dirname(configuration.storage.dataSourcePreferencesPath), { recursive: true })
   await mkdir(dirname(configuration.admin.credentialsPath), { recursive: true })
   await mkdir(dirname(configuration.admin.apiKeysPath), { recursive: true })
-  await assertPythonExecutable(configuration.providers.akshare.pythonExecutable)
+  if (amazingdata) await mkdir(amazingdata.cachePath, { recursive: true })
+  if (configuration.providers.akshare) {
+    await assertPythonExecutable(configuration.providers.akshare.pythonExecutable)
+  }
+  if (amazingdata) {
+    await assertPythonExecutable(amazingdata.pythonExecutable, 'AmazingData')
+  }
   const server = await createEvaTickServer({
     host: configuration.server.host,
     port: configuration.server.port,
@@ -50,9 +79,21 @@ export async function startEvaTickDaemon(configurationPath: string) {
       baseUrl: configuration.providers.hithink.baseUrl,
     }))
   }
-  await server.mountProvider(new AkshareProvider({
-    pythonExecutable: configuration.providers.akshare.pythonExecutable,
-  }))
+  if (amazingdata && amazingdataEnvironment) {
+    await server.mountProvider(new AmazingDataProvider({
+      pythonExecutable: amazingdata.pythonExecutable,
+      username: amazingdataEnvironment.username!,
+      password: amazingdataEnvironment.password!,
+      host: amazingdataEnvironment.host!,
+      port: Number(amazingdataEnvironment.port),
+      cachePath: amazingdata.cachePath,
+    }))
+  }
+  if (configuration.providers.akshare) {
+    await server.mountProvider(new AkshareProvider({
+      pythonExecutable: configuration.providers.akshare.pythonExecutable,
+    }))
+  }
   await server.mountProvider(new BinanceProvider())
   await server.mountProvider(new CoinbaseProvider())
   return server

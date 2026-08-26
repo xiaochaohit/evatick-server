@@ -26,3 +26,4 @@ jobs:
       - run: pnpm test
       - run: python -m pip install "./providers/akshare-python[test]"
       - run: python -m pytest -q providers/akshare-python/tests
+      - run: python -m unittest discover -s providers/amazingdata-python/tests -v

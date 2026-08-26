@@ -25,6 +25,14 @@
       "baseUrl": "https://fuyao.aicubes.cn",
       "apiKeyEnvironment": "HITHINK_FINANCE_API_KEY"
     },
+    "amazingdata": {
+      "pythonExecutable": "/opt/evatick-server/providers/amazingdata-python/.venv/bin/python",
+      "usernameEnvironment": "AMAZINGDATA_USERNAME",
+      "passwordEnvironment": "AMAZINGDATA_PASSWORD",
+      "hostEnvironment": "AMAZINGDATA_HOST",
+      "portEnvironment": "AMAZINGDATA_PORT",
+      "cachePath": "/var/lib/evatickd/amazingdata"
+    },
     "akshare": {
       "pythonExecutable": "/opt/evatick-server/providers/akshare-python/.venv/bin/python"
     }

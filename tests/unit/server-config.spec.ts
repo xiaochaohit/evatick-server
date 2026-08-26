@@ -36,6 +36,14 @@ function configuration() {
         baseUrl: 'https://fuyao.aicubes.cn/',
         apiKeyEnvironment: 'HITHINK_FINANCE_API_KEY',
       },
+      amazingdata: {
+        pythonExecutable: './amazingdata/bin/python',
+        usernameEnvironment: 'AMAZINGDATA_USERNAME',
+        passwordEnvironment: 'AMAZINGDATA_PASSWORD',
+        hostEnvironment: 'AMAZINGDATA_HOST',
+        portEnvironment: 'AMAZINGDATA_PORT',
+        cachePath: './data/amazingdata',
+      },
     },
   }
 }
@@ -56,11 +64,34 @@ describe('EVA daemon configuration', () => {
       expect(loaded.storage.historyPath).toBe(join(directory, 'data/history.duckdb'))
       expect(loaded.storage.dataSourcePreferencesPath).toBe(join(directory, 'data/data-source-preferences.json'))
       expect(loaded.admin.credentialsPath).toBe(join(directory, 'data/admin-credentials.json'))
-      expect(loaded.providers.akshare.pythonExecutable).toBe(join(directory, 'python/bin/python'))
+      expect(loaded.providers.akshare?.pythonExecutable).toBe(join(directory, 'python/bin/python'))
       expect(loaded.providers.hithink).toEqual({
         baseUrl: 'https://fuyao.aicubes.cn',
         apiKeyEnvironment: 'HITHINK_FINANCE_API_KEY',
       })
+      expect(loaded.providers.amazingdata).toEqual({
+        pythonExecutable: join(directory, 'amazingdata/bin/python'),
+        usernameEnvironment: 'AMAZINGDATA_USERNAME',
+        passwordEnvironment: 'AMAZINGDATA_PASSWORD',
+        hostEnvironment: 'AMAZINGDATA_HOST',
+        portEnvironment: 'AMAZINGDATA_PORT',
+        cachePath: join(directory, 'data/amazingdata'),
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('allows AKShare to be disabled when a paid provider is configured', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'evatickd-config-paid-'))
+    const path = join(directory, 'config.json')
+    const value = configuration()
+    delete (value.providers as Partial<typeof value.providers>).akshare
+    await writeFile(path, JSON.stringify(value), { mode: 0o600 })
+    try {
+      const loaded = await loadEvaDaemonConfiguration(path)
+      expect(loaded.providers.akshare).toBeUndefined()
+      expect(loaded.providers.amazingdata?.passwordEnvironment).toBe('AMAZINGDATA_PASSWORD')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

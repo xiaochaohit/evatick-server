@@ -25,12 +25,20 @@ export interface EvaDaemonConfiguration {
     apiKeysPath: string
   }
   providers: {
-    akshare: {
+    akshare?: {
       pythonExecutable: string
     }
     hithink?: {
       baseUrl: string
       apiKeyEnvironment: string
+    }
+    amazingdata?: {
+      pythonExecutable: string
+      usernameEnvironment: string
+      passwordEnvironment: string
+      hostEnvironment: string
+      portEnvironment: string
+      cachePath: string
     }
   }
 }
@@ -85,14 +93,25 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
   const admin = objectAt(root.admin, 'configuration.admin')
   rejectUnknownKeys(admin, ['username', 'initialPassword', 'credentialsPath', 'apiKeysPath'], 'configuration.admin')
   const providers = objectAt(root.providers, 'configuration.providers')
-  rejectUnknownKeys(providers, ['akshare', 'hithink'], 'configuration.providers')
-  const akshare = objectAt(providers.akshare, 'configuration.providers.akshare')
-  rejectUnknownKeys(akshare, ['pythonExecutable'], 'configuration.providers.akshare')
+  rejectUnknownKeys(providers, ['akshare', 'hithink', 'amazingdata'], 'configuration.providers')
+  const akshare = providers.akshare === undefined
+    ? undefined
+    : objectAt(providers.akshare, 'configuration.providers.akshare')
+  if (akshare) rejectUnknownKeys(akshare, ['pythonExecutable'], 'configuration.providers.akshare')
   const hithink = providers.hithink === undefined
     ? undefined
     : objectAt(providers.hithink, 'configuration.providers.hithink')
   if (hithink) {
     rejectUnknownKeys(hithink, ['baseUrl', 'apiKeyEnvironment'], 'configuration.providers.hithink')
+  }
+  const amazingdata = providers.amazingdata === undefined
+    ? undefined
+    : objectAt(providers.amazingdata, 'configuration.providers.amazingdata')
+  if (amazingdata) {
+    rejectUnknownKeys(amazingdata, [
+      'pythonExecutable', 'usernameEnvironment', 'passwordEnvironment',
+      'hostEnvironment', 'portEnvironment', 'cachePath',
+    ], 'configuration.providers.amazingdata')
   }
 
   const username = stringAt(admin.username, 'configuration.admin.username', 64).trim()
@@ -141,9 +160,9 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
       apiKeysPath: configuredPath(admin.apiKeysPath ?? './data/api-keys.json', 'configuration.admin.apiKeysPath', configurationDirectory),
     },
     providers: {
-      akshare: {
+      ...(akshare ? { akshare: {
         pythonExecutable: configuredPath(akshare.pythonExecutable, 'configuration.providers.akshare.pythonExecutable', configurationDirectory),
-      },
+      } } : {}),
       ...(hithink ? {
         hithink: {
           baseUrl: stringAt(
@@ -154,6 +173,36 @@ function parseConfiguration(value: unknown, configurationPath: string): EvaDaemo
           apiKeyEnvironment: environmentNameAt(
             hithink.apiKeyEnvironment ?? 'HITHINK_FINANCE_API_KEY',
             'configuration.providers.hithink.apiKeyEnvironment',
+          ),
+        },
+      } : {}),
+      ...(amazingdata ? {
+        amazingdata: {
+          pythonExecutable: configuredPath(
+            amazingdata.pythonExecutable,
+            'configuration.providers.amazingdata.pythonExecutable',
+            configurationDirectory,
+          ),
+          usernameEnvironment: environmentNameAt(
+            amazingdata.usernameEnvironment ?? 'AMAZINGDATA_USERNAME',
+            'configuration.providers.amazingdata.usernameEnvironment',
+          ),
+          passwordEnvironment: environmentNameAt(
+            amazingdata.passwordEnvironment ?? 'AMAZINGDATA_PASSWORD',
+            'configuration.providers.amazingdata.passwordEnvironment',
+          ),
+          hostEnvironment: environmentNameAt(
+            amazingdata.hostEnvironment ?? 'AMAZINGDATA_HOST',
+            'configuration.providers.amazingdata.hostEnvironment',
+          ),
+          portEnvironment: environmentNameAt(
+            amazingdata.portEnvironment ?? 'AMAZINGDATA_PORT',
+            'configuration.providers.amazingdata.portEnvironment',
+          ),
+          cachePath: configuredPath(
+            amazingdata.cachePath ?? './data/amazingdata',
+            'configuration.providers.amazingdata.cachePath',
+            configurationDirectory,
           ),
         },
       } : {}),
@@ -199,11 +248,11 @@ export async function loadEvaDaemonConfiguration(path: string): Promise<EvaDaemo
   return configuration
 }
 
-export async function assertPythonExecutable(path: string): Promise<void> {
+export async function assertPythonExecutable(path: string, provider = 'AKShare'): Promise<void> {
   try {
     await access(path, constants.X_OK)
   } catch {
-    throw new Error(`configured AKShare Python executable is not executable: ${path}`)
+    throw new Error(`configured ${provider} Python executable is not executable: ${path}`)
   }
 }
 

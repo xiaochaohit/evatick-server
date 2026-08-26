@@ -15,7 +15,7 @@
 
 EVA Tick Server（`evatickd`）将分散、异构的市场数据转换为适合大模型理解和调用的规范化、可读、版本化 JSON。它维护规范金融标的目录，完成搜索与解析、查询路由、超时重试、数据源回退和结果规范化，并通过 HTTP API 服务 EVA CLI、AI Agent 与其他自动化客户端。
 
-当前版本覆盖中国内地 A 股、上交所/深交所/中证指数、六家中国期货交易所，以及按交易所隔离的 Binance 和 Coinbase 加密货币。同花顺扶摇提供官方 A 股与指数目录、快照和日线，AKShare 补充分钟线、复权因子与期货能力；任何单一数据提供方都不是服务的产品边界。
+当前版本覆盖中国内地 A 股、上交所/深交所/中证指数、六家中国期货交易所，以及按交易所隔离的 Binance 和 Coinbase 加密货币。同花顺扶摇提供官方 A 股与指数目录、快照和日线；可选的银河证券星耀数智 AmazingData 提供 A 股与指数目录、快照、分钟/日线、复权因子和历史指数成分；AKShare 可选地补充免费行情与未覆盖期货能力。任何单一数据提供方都不是服务的产品边界。
 
 <!-- 媒体位：将快速演示 GIF/WebP 放在 docs/assets/evatick-demo.webp，然后取消下一行注释。 -->
 <!-- ![EVA Tick Server 快速演示](docs/assets/evatick-demo.webp) -->
@@ -95,7 +95,9 @@ chmod 600 ./evatickd.config.json
 1. 将 `admin.initialPassword` 替换为至少 8 个字符的私密初始密码。
 2. 将 `providers.akshare.pythonExecutable` 改为刚创建的虚拟环境 Python 的绝对路径。
 3. 按下方说明申请并配置同花顺扶摇 API Key。不使用同花顺时可删除 `providers.hithink` 配置段。
-4. 本地开发时，将 `storage` 和 `admin` 下的 `/var/lib/evatickd/...` 路径改为当前用户可写的路径，例如 `./data/...`。
+4. 使用 AmazingData 时按下方说明安装商业 SDK，并只在配置中保存凭据环境变量名。不使用时删除 `providers.amazingdata`。
+5. `providers.akshare` 现在可选；删除该配置段即可禁用，而不会删除其实现。
+6. 本地开发时，将 `storage` 和 `admin` 下的 `/var/lib/evatickd/...` 路径改为当前用户可写的路径，例如 `./data/...`。
 
 配置文件中的相对路径以配置文件所在目录为基准。当文件包含 `admin.initialPassword` 时，Unix 系统要求其权限为 `0600`。
 
@@ -162,6 +164,48 @@ curl --fail --silent --show-error http://127.0.0.1:8765/v1/health
 
 > [!IMPORTANT]
 > `HITHINK_FINANCE_API_KEY` 用于 EVA Tick Server 访问同花顺上游；后文通过管理中心创建的 `EVA_API_KEY` 用于客户端访问 EVA Tick Server。两者用途不同，不应混用。
+
+#### 配置银河证券星耀数智 AmazingData Provider
+
+AmazingData 是可选商业数据提供方。仓库不分发其 SDK、手册或凭据。请从获授权的银河证券渠道取得匹配 Python 版本的 AmazingData 和 TGW wheel，并先确认账号协议允许服务端使用、本地缓存、AI 处理、多用户展示及 API 输出。
+
+TGW 当前包含 Linux x86_64 和 Windows x86_64 原生库；Apple Silicon macOS 不能直接运行真实会话。Linux x86_64 部署示例：
+
+```shell
+python3 -m venv providers/amazingdata-python/.venv
+providers/amazingdata-python/.venv/bin/python -m pip install \
+  /secure/path/to/tgw-wheel.whl \
+  /secure/path/to/AmazingData-wheel.whl \
+  ./providers/amazingdata-python
+```
+
+配置只记录环境变量名和非敏感路径：
+
+```json
+{
+  "providers": {
+    "amazingdata": {
+      "pythonExecutable": "/opt/evatick-server/providers/amazingdata-python/.venv/bin/python",
+      "usernameEnvironment": "AMAZINGDATA_USERNAME",
+      "passwordEnvironment": "AMAZINGDATA_PASSWORD",
+      "hostEnvironment": "AMAZINGDATA_HOST",
+      "portEnvironment": "AMAZINGDATA_PORT",
+      "cachePath": "/var/lib/evatickd/amazingdata"
+    }
+  }
+}
+```
+
+将真实值写入权限为 `0600`、由 systemd 读取的 `/etc/evatickd/provider.env`，不要写入仓库：
+
+```dotenv
+AMAZINGDATA_USERNAME=<your-username>
+AMAZINGDATA_PASSWORD=<your-password>
+AMAZINGDATA_HOST=<vendor-host>
+AMAZINGDATA_PORT=<vendor-port>
+```
+
+Provider 使用一个长期运行的 Python sidecar 维持单一登录会话；超时或取消会终止异常会话，下次请求自动重新登录。原始行情柱继续写入 EVA 的 DuckDB，SDK 必需的内部缓存仅位于 `cachePath`。
 
 ### 4. 启动服务
 
@@ -254,10 +298,10 @@ SQLite 标的目录       DuckDB 历史仓库
 Cordis 数据提供方插件
      │
      ▼
-同花顺扶摇 REST API · AKShare Python 桥接进程 · 公共加密货币 REST API
+同花顺扶摇 REST API · AmazingData 持久 Python sidecar · AKShare Python 桥接进程 · 公共加密货币 REST API
      │
      ▼
-同花顺扶摇 · 新浪 · 东方财富 · 腾讯财经 · BaoStock · Binance · Coinbase
+同花顺扶摇 · 银河证券星耀数智 · 新浪 · 东方财富 · 腾讯财经 · BaoStock · Binance · Coinbase
 ```
 
 CLI 与服务端只通过 HTTP API 通信，不依赖服务端实现代码。数据提供方插件由 Cordis 管理生命周期；Python 数据桥接运行在独立进程中。
@@ -272,9 +316,11 @@ CLI 与服务端只通过 HTTP API 通信，不依赖服务端实现代码。数
 | `packages/catalog-sqlite` | SQLite 标的目录实现 |
 | `packages/cordis-runtime` | Cordis 插件运行时集成 |
 | `packages/provider-akshare` | AKShare 数据提供方插件 |
+| `packages/provider-amazingdata` | 银河证券星耀数智 AmazingData 数据提供方插件 |
 | `packages/provider-hithink` | 同花顺扶摇 REST API 数据提供方插件 |
 | `packages/provider-crypto` | Binance 与 Coinbase 公共行情数据提供方插件 |
 | `providers/akshare-python` | 进程隔离的 Python 数据桥接 |
+| `providers/amazingdata-python` | 维持登录会话的 AmazingData Python sidecar |
 | `contracts/openapi` | 公开 HTTP API 契约 |
 | `deploy` | 配置与 systemd 部署示例 |
 
@@ -315,6 +361,8 @@ providers/akshare-python/.venv/bin/python \
   -m pip install -e './providers/akshare-python[test]'
 providers/akshare-python/.venv/bin/python \
   -m pytest -q providers/akshare-python/tests
+
+python3 -m unittest discover -s providers/amazingdata-python/tests -v
 ```
 
 CI 会在每次 push 和 pull request 时运行 TypeScript 类型检查、Node.js 测试与 Python 测试。提交修改前请保持 OpenAPI 契约、实现和测试同步。

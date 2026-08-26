@@ -11,6 +11,13 @@ subject to their own licenses. They are not vendored in this repository.
 | [Cordis](https://github.com/deepseek-ai/deepseek-harness/tree/main/vendor/cordis) | EVA 服务端 plugin lifecycle | MIT |
 | [DuckDB Node API](https://github.com/duckdb/duckdb-node-neo) | Local historical-data warehouse | MIT |
 | [Fastify](https://github.com/fastify/fastify) | EVA 服务端 HTTP transport | MIT |
+| China Galaxy Securities AmazingData / TGW | Optional paid market-data provider; installed separately and not redistributed by this repository | Proprietary; account agreement and vendor authorization apply |
+
+AmazingData and TGW wheels, documentation, credentials, and market data are not
+included in this repository. Operators must obtain them directly through an
+authorized China Galaxy Securities channel and confirm that server-side use,
+local caching, AI processing, multi-user display, and API output are permitted
+before enabling the provider outside a personal environment.
 
 ## AKShare license
 

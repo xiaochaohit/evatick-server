@@ -20,6 +20,7 @@
     "@evatick/core": "workspace:*",
     "@evatick/server": "workspace:*",
     "@evatick/provider-akshare": "workspace:*",
+    "@evatick/provider-amazingdata": "workspace:*",
     "@evatick/provider-crypto": "workspace:*",
     "@evatick/provider-hithink": "workspace:*",
     "@types/node": "24.10.1",
