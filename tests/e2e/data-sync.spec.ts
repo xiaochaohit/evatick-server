@@ -219,6 +219,65 @@ describe('local historical data synchronization', () => {
     }
   })
 
+  it('lists and directly synchronizes global commodity reference series', async () => {
+    const requestedSymbols: string[] = []
+    const provider: InstrumentProvider = {
+      id: 'foreign-commodity-fixture',
+      async listInstruments() {
+        return [{
+          type: 'future', market: 'GLOBAL', name: '伦敦金 XAU 日线参考序列',
+          symbol: 'XAU', providerSymbol: 'FOREIGN:XAU', venue: 'OTC', currency: 'USD',
+          status: 'active', aliases: ['XAU/USD'], capabilities: ['bars'],
+        }]
+      },
+      async getBars(call) {
+        requestedSymbols.push(call.providerSymbol)
+        return [{
+          source: 'sina', interval: '1d', tradingDate: '2026-08-26',
+          periodStart: '2026-08-26T00:00:00+00:00',
+          periodEnd: '2026-08-26T23:59:59+00:00', currency: 'USD',
+          open: '4657.23', high: '4673.66', low: '4583.1', close: '4594.49',
+          volume: 0, turnover: null, adjustment: 'none', complete: true,
+        }]
+      },
+    }
+    const server = await createEvaTickServer({ healthCheckIntervalMs: 0 })
+    await server.mountProvider(provider)
+    try {
+      const instrumentId = 'global:future:OTC:XAU'
+      const catalog = await fetch(
+        `${server.url}/v1/data-sync/instruments?type=future&q=XAU&limit=50&offset=0`,
+      )
+      expect(await catalog.json()).toMatchObject({
+        data: [{
+          instrument_id: instrumentId, symbol: 'XAU', venue: 'OTC',
+          name: '伦敦金 XAU 日线参考序列',
+        }],
+        page: { total: 1 },
+      })
+
+      const started = await fetch(`${server.url}/v1/data-sync/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          instrument_types: ['future'], instrument_ids: [instrumentId], interval: '1d',
+          start: '2026-08-26', end: '2026-08-26', adjustment: 'none',
+        }),
+      })
+      expect(started.status).toBe(202)
+      await waitForRun(server.url)
+      expect(requestedSymbols).toEqual(['FOREIGN:XAU'])
+
+      const bars = await fetch(
+        `${server.url}/v1/local-data/instruments/${encodeURIComponent(instrumentId)}/bars?limit=20`,
+      )
+      expect(await bars.json()).toMatchObject({
+        data: [{ trading_date: '2026-08-26', close: '4594.49' }],
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
   it('stores one-minute bars separately and serves covered requests from DuckDB', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'eva-minute-sync-'))
     const requestedIntervals: string[] = []
@@ -475,9 +534,9 @@ describe('local historical data synchronization', () => {
       expect(page).toContain('<th>交易场所</th>')
       expect(page).toContain('搜索标的')
       expect(page).toContain('同步此标的')
-      expect(page).toContain('期货按品种同步主力连续序列')
-      expect(page).toContain('<th>品种</th><th>品种代码</th>')
-      expect(page).toContain('同步主力连续')
+      expect(page).toContain('境内期货按品种同步主力连续')
+      expect(page).toContain('<th>序列</th><th>代码</th>')
+      expect(page).toContain('同步日线')
       expect(page).toContain('同步所选')
       expect(page).toContain('全部同步')
       expect(page).toContain('刷新标的目录')

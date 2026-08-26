@@ -49,12 +49,20 @@ describe('AKShare provider contract', () => {
         { index_code: '000300', display_name: '沪深300' },
         { index_code: '399001', display_name: '深证成指' },
       ] }
-      return { source: 'exchange', data: [
+      if (request.operation === 'list_futures') return { source: 'exchange', data: [
         { symbol: 'IF2609', variety: '沪深300股指期货', venue: 'CFFEX', main_symbol: 'MAIN:CFFEX:IF' },
         { 合约: 'cu2609', 品种名称: '铜', venue: 'SHFE', main_symbol: 'MAIN:SHFE:CU' },
         { 合约: 'i2609', 品种名称: '铁矿石', venue: 'DCE', main_symbol: 'MAIN:DCE:I' },
         { symbol: 'lc2609', variety: '碳酸锂', venue: 'GFEX', main_symbol: 'MAIN:GFEX:LC' },
       ] }
+      return { source: 'sina-foreign-catalog', data: [{
+        symbol: 'XAU', provider_symbol: 'FOREIGN:XAU', venue: 'OTC',
+        name: '伦敦金 XAU 日线参考序列', currency: 'USD',
+        aliases: ['伦敦金', 'XAU/USD'],
+      }, {
+        symbol: 'BRN', provider_symbol: 'FOREIGN:OIL', venue: 'IFEU',
+        name: 'ICE Brent 原油连续日线', currency: 'USD', aliases: ['OIL'],
+      }] }
     }
     const provider = new AkshareProvider({ runner })
     const signal = new AbortController().signal
@@ -84,8 +92,41 @@ describe('AKShare provider contract', () => {
         type: 'future', symbol: 'lc2609', venue: 'GFEX',
         providerSymbol: 'GFEX:lc2609', name: '碳酸锂 lc2609',
       }),
+      expect.objectContaining({
+        type: 'future', market: 'GLOBAL', symbol: 'XAU', venue: 'OTC',
+        providerSymbol: 'FOREIGN:XAU', currency: 'USD', capabilities: ['bars'],
+        aliases: ['伦敦金', 'XAU/USD'],
+      }),
+      expect.objectContaining({
+        type: 'future', market: 'GLOBAL', symbol: 'BRN', venue: 'IFEU',
+        providerSymbol: 'FOREIGN:OIL', currency: 'USD', capabilities: ['bars'],
+      }),
     ])
-    expect(signals).toEqual([signal, signal, signal])
+    expect(signals).toEqual([signal, signal, signal, signal])
+  })
+
+  it('normalizes foreign commodity daily bars as USD reference series', async () => {
+    const requests: unknown[] = []
+    const provider = new AkshareProvider({ runner: async (request) => {
+      requests.push(request)
+      return { source: 'sina', data: [{
+        date: '2026-08-26', open: 4657.23, high: 4673.66,
+        low: 4583.1, close: 4594.49, volume: 0,
+      }] }
+    } })
+
+    await expect(provider.getBars!({
+      providerSymbol: 'FOREIGN:XAU', signal: new AbortController().signal,
+      interval: '1d', adjustment: 'none', start: '2026-08-01', end: '2026-08-26',
+    })).resolves.toEqual([expect.objectContaining({
+      source: 'sina', tradingDate: '2026-08-26', close: '4594.49',
+      currency: 'USD', periodStart: '2026-08-26T00:00:00+00:00',
+      periodEnd: '2026-08-26T23:59:59+00:00',
+    })])
+    expect(requests).toEqual([expect.objectContaining({
+      operation: 'bars', instrumentType: 'future', providerSymbol: 'FOREIGN:XAU',
+      interval: '1d', start: '2026-08-01', end: '2026-08-26',
+    })])
   })
 
   it('routes contract and main continuous futures daily bars through Sina', async () => {

@@ -289,6 +289,44 @@ FUTURES_MARKETS = {
     "广期所": "GFEX",
 }
 
+FOREIGN_COMMODITY_SERIES = (
+    {
+        "symbol": "XAU", "provider_symbol": "FOREIGN:XAU", "venue": "OTC",
+        "name": "伦敦金 XAU 日线参考序列", "currency": "USD",
+        "aliases": ["伦敦金", "现货黄金", "XAU/USD", "XAUUSD"],
+    },
+    {
+        "symbol": "XAG", "provider_symbol": "FOREIGN:XAG", "venue": "OTC",
+        "name": "伦敦银 XAG 日线参考序列", "currency": "USD",
+        "aliases": ["伦敦银", "现货白银", "XAG/USD", "XAGUSD"],
+    },
+    {
+        "symbol": "GC", "provider_symbol": "FOREIGN:GC", "venue": "COMEX",
+        "name": "COMEX 黄金 GC 连续日线", "currency": "USD",
+        "aliases": ["COMEX黄金", "纽约黄金"],
+    },
+    {
+        "symbol": "SI", "provider_symbol": "FOREIGN:SI", "venue": "COMEX",
+        "name": "COMEX 白银 SI 连续日线", "currency": "USD",
+        "aliases": ["COMEX白银", "纽约白银"],
+    },
+    {
+        "symbol": "CL", "provider_symbol": "FOREIGN:CL", "venue": "NYMEX",
+        "name": "NYMEX WTI 原油 CL 连续日线", "currency": "USD",
+        "aliases": ["WTI", "WTI原油", "NYMEX原油", "美原油"],
+    },
+    {
+        "symbol": "BRN", "provider_symbol": "FOREIGN:OIL", "venue": "IFEU",
+        "name": "ICE Brent 原油连续日线", "currency": "USD",
+        "aliases": ["OIL", "Brent", "Brent原油", "布伦特原油"],
+    },
+)
+
+FOREIGN_COMMODITY_PROVIDER_SYMBOLS = {
+    str(series["provider_symbol"]).split(":", 1)[1]
+    for series in FOREIGN_COMMODITY_SERIES
+}
+
 
 def _future_contracts(akshare: Any) -> list[dict[str, Any]]:
     records = _records(akshare.futures_hist_table_em())
@@ -333,6 +371,13 @@ def _list_futures(akshare: Any) -> dict[str, Any]:
     return {"data": contracts, "source": "eastmoney-catalog+sina-main"}
 
 
+def _list_foreign_commodities() -> dict[str, Any]:
+    return {
+        "data": [dict(series) for series in FOREIGN_COMMODITY_SERIES],
+        "source": "sina-foreign-catalog",
+    }
+
+
 def _sina_contract_symbol(
     venue: str, symbol: str, request: dict[str, Any]
 ) -> str:
@@ -359,6 +404,13 @@ def _future_bars(
     if request.get("interval", "1d") != "1d":
         raise ValueError("Sina futures supports daily bars only")
     parts = str(request["providerSymbol"]).split(":")
+    if len(parts) == 2 and parts[0] == "FOREIGN":
+        symbol = parts[1].upper()
+        if symbol not in FOREIGN_COMMODITY_PROVIDER_SYMBOLS:
+            raise ValueError("unsupported foreign commodity series")
+        return _filter_dates(
+            _records(akshare.futures_foreign_hist(symbol=symbol)), request
+        )
     if len(parts) == 3 and parts[0] == "MAIN":
         product = parts[2].upper()
         return _records(akshare.futures_main_sina(
@@ -508,6 +560,8 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
         return {"data": _records(akshare.index_stock_info()), "source": "akshare"}
     if operation == "list_futures":
         return _list_futures(akshare)
+    if operation == "list_foreign_commodities":
+        return _list_foreign_commodities()
     if operation == "health":
         return _health_check(
             akshare, request["source"], request["instrumentType"]

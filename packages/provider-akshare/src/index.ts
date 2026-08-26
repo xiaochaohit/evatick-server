@@ -26,6 +26,7 @@ export type AkshareRequest =
   | { operation: 'list_stocks' }
   | { operation: 'list_indices' }
   | { operation: 'list_futures' }
+  | { operation: 'list_foreign_commodities' }
   | { operation: 'health'; source: string; instrumentType: 'equity' | 'index' | 'future' }
   | {
       operation: 'bars'
@@ -195,7 +196,7 @@ export class AkshareProvider implements InstrumentProvider {
       capabilities: {
         equity: ['日线', '分时', '行情快照', '复权因子'],
         index: ['日线', '分时', '行情快照'],
-        future: ['当前合约目录', '主力连续日线', '合约日线', '行情快照'],
+        future: ['当前合约目录', '主力连续日线', '合约日线', '国际商品连续日线', '行情快照'],
       },
     },
     {
@@ -272,10 +273,11 @@ export class AkshareProvider implements InstrumentProvider {
     options: { refresh?: boolean } = {},
   ): Promise<readonly ProviderInstrument[]> {
     if (this.instruments && !options.refresh) return this.instruments
-    const [stockResult, indexResult, futureResult] = await Promise.all([
+    const [stockResult, indexResult, futureResult, foreignCommodityResult] = await Promise.all([
       this.run({ operation: 'list_stocks' }, signal),
       this.run({ operation: 'list_indices' }, signal),
       this.run({ operation: 'list_futures' }, signal),
+      this.run({ operation: 'list_foreign_commodities' }, signal),
     ])
     const stocks = stockResult.data
     const indices = indexResult.data
@@ -312,6 +314,21 @@ export class AkshareProvider implements InstrumentProvider {
           symbol, providerSymbol: `${venue}:${symbol}`, venue,
           ...(mainContinuousProviderSymbol ? { mainContinuousProviderSymbol } : {}),
           currency: 'CNY', status: 'active', capabilities: ['quote', 'bars'],
+        }]
+      }),
+      ...foreignCommodityResult.data.flatMap((record): ProviderInstrument[] => {
+        const symbol = asText(record.symbol)?.trim().toUpperCase()
+        const providerSymbol = asText(record.provider_symbol)?.trim().toUpperCase()
+        const venue = asText(record.venue)?.trim().toUpperCase()
+        const name = asText(record.name)?.trim()
+        const currency = asText(record.currency)?.trim().toUpperCase()
+        const aliases = Array.isArray(record.aliases)
+          ? record.aliases.flatMap((alias) => asText(alias) ?? [])
+          : []
+        if (!symbol || !providerSymbol || !venue || !name || !currency) return []
+        return [{
+          type: 'future', market: 'GLOBAL', name, symbol, providerSymbol, venue,
+          currency, status: 'active', aliases, capabilities: ['bars'],
         }]
       }),
     ]
@@ -353,17 +370,19 @@ export class AkshareProvider implements InstrumentProvider {
       const minutes = INTRADAY_MINUTES.get(
         call.interval as '1m' | '5m' | '15m' | '30m' | '60m',
       )
+      const foreign = call.providerSymbol.startsWith('FOREIGN:')
+      const timeZoneOffset = foreign ? '+00:00' : '+08:00'
       const periodEnd = timestamp
         ? shanghaiDateTime(timestamp)
-        : `${date}T23:59:59+08:00`
+        : `${date}T23:59:59${timeZoneOffset}`
       const periodStart = minutes
         ? subtractMinutes(periodEnd, minutes)
-        : `${date}T00:00:00+08:00`
+        : `${date}T00:00:00${timeZoneOffset}`
       return [{
         source: result.source,
         interval: call.interval, tradingDate: date,
         periodStart, periodEnd,
-        currency: 'CNY', open, high, low, close,
+        currency: foreign ? 'USD' : 'CNY', open, high, low, close,
         volume: asNumber(pick(record, 'volume', '成交量')),
         turnover: asText(pick(record, 'amount', '成交额')) ?? null,
         adjustment: call.adjustment,

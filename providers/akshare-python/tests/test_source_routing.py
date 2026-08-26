@@ -409,6 +409,51 @@ class SourceRoutingTest(unittest.TestCase):
             "symbol": "I0", "start_date": "20260820", "end_date": "20260821",
         }])
 
+    def test_lists_supported_foreign_commodity_series_without_network(self) -> None:
+        with patch.dict(sys.modules, {"akshare": SimpleNamespace()}):
+            result = execute({"operation": "list_foreign_commodities"})
+
+        self.assertEqual(result["source"], "sina-foreign-catalog")
+        self.assertEqual(
+            [(item["symbol"], item["provider_symbol"], item["venue"])
+             for item in result["data"]],
+            [("XAU", "FOREIGN:XAU", "OTC"),
+             ("XAG", "FOREIGN:XAG", "OTC"),
+             ("GC", "FOREIGN:GC", "COMEX"),
+             ("SI", "FOREIGN:SI", "COMEX"),
+             ("CL", "FOREIGN:CL", "NYMEX"),
+             ("BRN", "FOREIGN:OIL", "IFEU")],
+        )
+
+    def test_foreign_commodity_bars_use_sina_history_and_filter_dates(self) -> None:
+        calls: list[str] = []
+
+        def history(symbol: str):
+            calls.append(symbol)
+            return [
+                {"date": "2026-08-20", "open": 80, "high": 82, "low": 79, "close": 81},
+                {"date": "2026-08-21", "open": 81, "high": 83, "low": 80, "close": 82},
+            ]
+
+        with patch.dict(sys.modules, {
+            "akshare": SimpleNamespace(futures_foreign_hist=history),
+        }):
+            result = execute({
+                "operation": "bars", "instrumentType": "future",
+                "providerSymbol": "FOREIGN:CL", "interval": "1d",
+                "start": "2026-08-21", "end": "2026-08-21",
+                "adjustment": "none", "sourceOrder": ["sina"],
+            })
+
+        self.assertEqual(calls, ["CL"])
+        self.assertEqual(result, {
+            "source": "sina",
+            "data": [{
+                "date": "2026-08-21", "open": 81, "high": 83,
+                "low": 80, "close": 82,
+            }],
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

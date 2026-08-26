@@ -15,7 +15,7 @@ English · [简体中文](README.md)
 
 EVA Tick Server (`evatickd`) turns fragmented, provider-specific market data into normalized, readable, versioned JSON designed for large language models and tool-using agents. It maintains a canonical instrument catalog, performs search and resolution, routes requests with timeouts and fallback, and serves the EVA CLI and other automated clients through HTTP.
 
-The current release covers mainland China A-shares; Shanghai, Shenzhen, and CSI indices; all six mainland China futures exchanges; and exchange-scoped Binance and Coinbase cryptocurrency markets. HiThink Fuyao supplies official A-share and index catalogs, snapshots, and daily bars. Optional China Galaxy Securities AmazingData support adds A-share and index catalogs, snapshots, intraday/daily bars, adjustment factors, and historical index membership. AKShare remains optional for free-source fallback and uncovered futures capabilities; no single provider defines the product boundary.
+The current release covers mainland China A-shares; Shanghai, Shenzhen, and CSI indices; all six mainland China futures exchanges; international gold, silver, and crude-oil daily reference/continuous series; and exchange-scoped Binance and Coinbase cryptocurrency markets. HiThink Fuyao supplies official A-share and index catalogs, snapshots, and daily bars. Optional China Galaxy Securities AmazingData support adds A-share and index catalogs, snapshots, intraday/daily bars, adjustment factors, and historical index membership. AKShare remains optional for free-source fallback, uncovered futures capabilities, and Sina Finance foreign-commodity daily bars; no single provider defines the product boundary.
 
 <!-- Media slot: add a demo GIF/WebP at docs/assets/evatick-demo.webp, then uncomment the next line. -->
 <!-- ![EVA Tick Server demo](docs/assets/evatick-demo.webp) -->
@@ -44,6 +44,7 @@ Traditional financial APIs often expose provider-specific functions, identifiers
 | Equities | Mainland China A-shares | ✓ | Intraday, daily | — |
 | Indices | Shanghai, Shenzhen, and CSI indices | ✓ | Intraday, daily | ✓ |
 | Futures | CFFEX, SHFE, INE, CZCE, DCE, and GFEX | ✓ | Contract daily bars; unadjusted main continuous series | — |
+| International commodity reference/continuous series | XAU, XAG, COMEX GC/SI, NYMEX CL, and ICE Brent | — | Daily | — |
 | Cryptocurrencies | Binance and Coinbase Exchange | ✓ | Minute through monthly, depending on venue | — |
 
 Cryptocurrency instruments are exchange-scoped, for example
@@ -56,6 +57,7 @@ The server also provides:
 - Multi-source health checks, request timeouts, retries, and fallback
 - Background daily and one-minute bar synchronization, resume support, and daily schedules
 - Unadjusted main continuous futures series from Sina's free daily feed; month contracts use the same daily source, while Eastmoney is used only for current contract discovery
+- Historical daily bars for `XAU`, `XAG`, `GC`, `SI`, `CL`, and Brent through AKShare's Sina Finance foreign-market interface; these free reference/continuous series are not official exchange month-contract data
 - API-key authentication and RFC 9457-style `application/problem+json` errors
 - Admin login, key management, local data browsing, sync controls, and provider status
 

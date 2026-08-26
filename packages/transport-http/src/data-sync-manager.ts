@@ -318,13 +318,14 @@ export class DataSyncManager {
     instrumentTypes: readonly InstrumentType[],
   ): readonly CatalogInstrument[] {
     const regular = catalog.filter((instrument) =>
-      instrument.type !== 'future' &&
+      (instrument.type !== 'future' || instrument.market === 'GLOBAL') &&
       instrumentTypes.includes(instrument.type) &&
       instrument.capabilities.includes('bars'))
     if (!instrumentTypes.includes('future')) return regular
     const products = new Map<string, CatalogInstrument>()
     for (const contract of catalog) {
-      if (contract.type !== 'future' || !contract.venue || !contract.capabilities.includes('bars')) continue
+      if (contract.type !== 'future' || contract.market !== 'CN' ||
+        !contract.venue || !contract.capabilities.includes('bars')) continue
       const product = futuresProductCode(contract.symbol)
       if (!product) continue
       const key = `${contract.venue}:${product}`
