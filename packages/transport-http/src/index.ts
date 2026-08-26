@@ -501,6 +501,7 @@ export class EvaHttpService extends Service {
       Querystring: {
         q?: string
         type?: string
+        market?: string
         interval?: string
         limit?: string
         offset?: string
@@ -509,11 +510,13 @@ export class EvaHttpService extends Service {
       const limit = Number(request.query.limit ?? 30)
       const offset = Number(request.query.offset ?? 0)
       const instrumentType = request.query.type
+      const market = request.query.market
       const interval = request.query.interval
       if (
         !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         !Number.isInteger(offset) || offset < 0 ||
         (instrumentType !== undefined && !isInstrumentType(instrumentType)) ||
+        (market !== undefined && market !== 'CN' && market !== 'GLOBAL') ||
         (interval !== undefined && interval !== '1m' && interval !== '1d') ||
         (request.query.q?.length ?? 0) > 100
       ) {
@@ -522,7 +525,7 @@ export class EvaHttpService extends Service {
           title: 'Invalid local data query',
           status: 400,
           code: 'INVALID_LOCAL_DATA_QUERY',
-          detail: 'q, type, interval, limit, or offset is invalid.',
+          detail: 'q, type, market, interval, limit, or offset is invalid.',
           retryable: false,
           request_id: `req_${randomUUID()}`,
         })
@@ -531,6 +534,7 @@ export class EvaHttpService extends Service {
         this.dataSyncManager.browseInstruments({
           query: request.query.q,
           instrumentType,
+          market,
           interval,
           limit,
           offset,
@@ -651,13 +655,15 @@ export class EvaHttpService extends Service {
     })
 
     this.app.get<{
-      Querystring: { type?: string; q?: string; limit?: string; offset?: string }
+      Querystring: { type?: string; market?: string; q?: string; limit?: string; offset?: string }
     }>('/v1/data-sync/instruments', async (request, reply) => {
       const instrumentType = request.query.type
+      const market = request.query.market
       const limit = Number(request.query.limit ?? 50)
       const offset = Number(request.query.offset ?? 0)
       if (
         !isInstrumentType(instrumentType) ||
+        (market !== undefined && market !== 'CN' && market !== 'GLOBAL') ||
         (request.query.q?.length ?? 0) > 100 ||
         !Number.isInteger(limit) || limit < 1 || limit > 100 ||
         !Number.isInteger(offset) || offset < 0
@@ -666,13 +672,14 @@ export class EvaHttpService extends Service {
           type: 'urn:eva:problem:invalid-data-sync-instrument-query',
           title: 'Invalid data sync instrument query', status: 400,
           code: 'INVALID_DATA_SYNC_INSTRUMENT_QUERY',
-          detail: 'type, q, limit, or offset is invalid.',
+          detail: 'type, market, q, limit, or offset is invalid.',
           retryable: false, request_id: `req_${randomUUID()}`,
         })
       }
       const result = await this.dataSyncManager.listSyncInstruments({
         query: request.query.q,
         instrumentType,
+        market,
         limit,
         offset,
       })

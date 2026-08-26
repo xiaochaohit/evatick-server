@@ -140,6 +140,7 @@ export interface LocalQuote {
 export interface LocalInstrumentSummary {
   instrument_id: string
   instrument_type: InstrumentType
+  market: CatalogInstrument['market']
   symbol: string
   name: string
   venue: string | null
@@ -528,6 +529,7 @@ export class DataSyncManager {
   async browseInstruments(request: {
     query?: string
     instrumentType?: InstrumentType
+    market?: CatalogInstrument['market']
     interval?: DataSyncInterval
     limit: number
     offset: number
@@ -538,6 +540,7 @@ export class DataSyncManager {
     const filters = {
       query: `%${query.toLowerCase()}%`,
       instrument_type: instrumentType,
+      market_prefix: request.market ? `${request.market.toLowerCase()}:%` : '',
       interval: request.interval ?? '',
     }
     const totalReader = await this.db.runAndReadAll(`
@@ -553,6 +556,7 @@ export class DataSyncManager {
       LEFT JOIN daily d ON d.instrument_id = i.instrument_id
       LEFT JOIN minute m ON m.instrument_id = i.instrument_id
       WHERE ($instrument_type = '' OR i.instrument_type = $instrument_type)
+        AND ($market_prefix = '' OR lower(i.instrument_id) LIKE $market_prefix)
         AND ($query = '%%' OR lower(i.symbol) LIKE $query OR lower(i.name) LIKE $query)
         AND (($interval = '' AND (coalesce(d.records, 0) > 0 OR coalesce(m.records, 0) > 0))
           OR ($interval = '1d' AND coalesce(d.records, 0) > 0)
@@ -582,6 +586,7 @@ export class DataSyncManager {
         LEFT JOIN daily d ON d.instrument_id = i.instrument_id
         LEFT JOIN minute m ON m.instrument_id = i.instrument_id
         WHERE ($instrument_type = '' OR i.instrument_type = $instrument_type)
+          AND ($market_prefix = '' OR lower(i.instrument_id) LIKE $market_prefix)
           AND ($query = '%%' OR lower(i.symbol) LIKE $query OR lower(i.name) LIKE $query)
           AND (($interval = '' AND (coalesce(d.records, 0) > 0 OR coalesce(m.records, 0) > 0))
             OR ($interval = '1d' AND coalesce(d.records, 0) > 0)
@@ -626,6 +631,7 @@ export class DataSyncManager {
         return {
           instrument_id: String(row.instrument_id),
           instrument_type: row.instrument_type as InstrumentType,
+          market: String(row.instrument_id).startsWith('global:') ? 'GLOBAL' : 'CN',
           symbol: String(row.symbol),
           name: String(row.name),
           venue: row.venue === null ? null : String(row.venue),
@@ -652,6 +658,7 @@ export class DataSyncManager {
   async listSyncInstruments(request: {
     query?: string
     instrumentType: InstrumentType
+    market?: CatalogInstrument['market']
     limit: number
     offset: number
   }): Promise<{ total: number; items: readonly SyncInstrumentSummary[] }> {
@@ -661,6 +668,7 @@ export class DataSyncManager {
       await this.dependencies.loadInstruments(), [request.instrumentType],
     )
       .filter((instrument) =>
+        (!request.market || instrument.market === request.market) &&
         (!query || [instrument.symbol, instrument.name, instrument.instrumentId]
           .some((value) => value.replaceAll(/\s+/g, '').toLowerCase().includes(query))))
       .sort((left, right) => left.symbol.localeCompare(right.symbol))
