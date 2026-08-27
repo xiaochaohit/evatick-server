@@ -47,6 +47,15 @@ Traditional financial APIs often expose provider-specific functions, identifiers
 | International commodity reference/continuous series | XAU, XAG, COMEX GC/SI, NYMEX CL, and ICE Brent | — | Daily | — |
 | Cryptocurrencies | Binance and Coinbase Exchange | ✓ | Minute through monthly, depending on venue | — |
 
+### Data providers
+
+| Provider | Enablement | Primary capabilities | Notes |
+| --- | --- | --- | --- |
+| HiThink Fuyao | Optional; API key required | A-share and index catalogs, quotes, and daily bars | REST API integration |
+| China Galaxy Securities AmazingData | Optional; commercial SDK, account, and complete data entitlements required | A-share and index catalogs, Level-1 quotes, intraday/daily bars, adjustment factors, and historical constituents | Persistent Python sidecar; do not add to production configuration until live acceptance passes |
+| AKShare | Optional | Free-source fallback, futures, and international commodity reference/continuous series | Isolated Python process |
+| Binance and Coinbase Exchange | Enabled by default | Venue-scoped cryptocurrency quotes and bars | Public REST APIs; no cross-venue fallback |
+
 Cryptocurrency instruments are exchange-scoped, for example
 `global:crypto:BINANCE:BTC-USDT` and `global:crypto:COINBASE:BTC-USDT`. The server
 never falls back across these exchanges or combines their prices.
@@ -117,17 +126,34 @@ placing it in the repository.
 
 #### Configure China Galaxy Securities AmazingData
 
-AmazingData is an optional commercial provider. This repository does not distribute its SDK, manual, credentials, or data. Obtain the AmazingData and TGW wheels through an authorized China Galaxy Securities channel and confirm that your agreement permits server-side use, local caching, AI processing, multi-user display, and API output.
+AmazingData is an optional commercial provider. Obtain the AmazingData and TGW wheels through an authorized China Galaxy Securities channel and confirm that your agreement permits server-side use, local caching, AI processing, multi-user display, and API output. Never commit the SDK, manual, or credentials to a public Git repository.
 
-TGW currently ships native Linux x86_64 and Windows x86_64 libraries, so a real session cannot run directly on Apple Silicon macOS. On Linux x86_64:
+Keep locally obtained packages and documentation together at:
+
+```text
+vendor/amazingdata-sdk/
+├── AmazingData-1.1.9-cp314-none-any.whl
+├── tgw-1.0.9.2-py3-none-any.whl
+└── AmazingData-manual.pdf
+```
+
+`vendor/amazingdata-sdk/` is ignored by `.gitignore`. A fresh clone does not contain these files; copy them separately from an authorized source.
+
+The AmazingData 1.1.9 wheel contains Python 3.14 bytecode, while TGW 1.0.9.2 includes native Linux and Windows x86_64 libraries. A real session therefore requires an x86_64 host and CPython 3.14 and cannot run directly on Apple Silicon macOS. On Linux x86_64:
 
 ```shell
-python3 -m venv providers/amazingdata-python/.venv
-providers/amazingdata-python/.venv/bin/python -m pip install \
-  /secure/path/to/tgw-wheel.whl \
-  /secure/path/to/AmazingData-wheel.whl \
+uv python install 3.14
+uv venv --python 3.14 providers/amazingdata-python/.venv
+uv pip install --python providers/amazingdata-python/.venv/bin/python \
+  ./vendor/amazingdata-sdk/tgw-1.0.9.2-py3-none-any.whl \
+  ./vendor/amazingdata-sdk/AmazingData-1.1.9-cp314-none-any.whl \
   ./providers/amazingdata-python
+
+providers/amazingdata-python/.venv/bin/python -c \
+  'import AmazingData, tgw; print("AmazingData SDK import: OK")'
 ```
+
+When `uv` manages production Python, ensure the virtual environment points to a runtime directory readable by the service account. Do not leave `/opt/.../.venv/bin/python` pointing into a root-only `/root/.local/...` path.
 
 Enable `providers.amazingdata` using `deploy/evatickd.config.example.json`, then place the four real values in the mode-`0600` `/etc/evatickd/provider.env` file:
 
@@ -139,6 +165,28 @@ AMAZINGDATA_PORT=<vendor-port>
 ```
 
 The provider maintains one authenticated Python sidecar and reconnects after an aborted or failed process. EVA stores raw bars in DuckDB; SDK-required internal files remain under the configured `cachePath`.
+
+> [!IMPORTANT]
+> Installing the SDK and logging in do not prove that market-data entitlements are active. A simulation account restricted to basic Level-1 stock snapshots can only be validated during trading hours with `SubscribeData.register(..., Period.snapshot.value)`. `MarketData.query_snapshot()` is a historical-snapshot query and is not a substitute for realtime subscription entitlement testing. Calendars, historical snapshots, bars, adjustment factors, and constituents require their corresponding entitlements.
+
+Before adding AmazingData to production configuration, complete live SDK acceptance on an x86_64 test host:
+
+1. Log in and out without writing the username, password, or login token to logs.
+2. Retrieve the A-share catalog.
+3. Subscribe to one A-share Level-1 snapshot during trading hours and receive a callback.
+4. Validate calendars, historical snapshots, intraday/daily bars, adjustment factors, and index constituents separately.
+5. Confirm that a timeout terminates a stuck sidecar and EVA falls back to another provider.
+6. Only after all required checks pass, add `providers.amazingdata` to production configuration and restart the service. Keep simulation or partially entitled accounts disabled.
+
+After enabling it, restart and verify the service:
+
+```shell
+sudo systemctl restart evatickd
+sudo systemctl is-active evatickd
+curl --fail --silent --show-error http://127.0.0.1:8765/v1/health
+```
+
+Then open **Data Sources** in the admin console, confirm that AmazingData appears, and check both the equity and index categories. The provider is live only when both its catalog and real data queries succeed.
 
 ### 4. Start the server
 

@@ -47,6 +47,15 @@ EVA Tick Server（`evatickd`）将分散、异构的市场数据转换为适合�
 | 国际商品参考/连续序列 | XAU、XAG、COMEX GC/SI、NYMEX CL、ICE Brent | — | 日线 | — |
 | 加密货币 | Binance、Coinbase Exchange | ✓ | 分钟至月线（依交易所能力） | — |
 
+### 数据提供方
+
+| 数据提供方 | 启用方式 | 主要能力 | 说明 |
+| --- | --- | --- | --- |
+| 同花顺扶摇 | 可选，需要 API Key | A 股与指数目录、快照、日线 | 通过 REST API 接入 |
+| 银河证券星耀数智 AmazingData | 可选，需要商业 SDK、账号与完整数据权限 | A 股与指数目录、Level-1 快照、分钟/日线、复权因子、历史指数成分 | 使用持久 Python sidecar；正式验收通过前不要加入生产配置 |
+| AKShare | 可选 | 免费行情回退、期货及国际商品参考/连续序列 | 通过独立 Python 进程接入 |
+| Binance、Coinbase Exchange | 默认启用 | 交易所隔离的加密货币快照与行情柱 | 使用公开 REST API，不跨交易所回退 |
+
 加密货币按交易所建立独立规范标的，例如 `global:crypto:BINANCE:BTC-USDT`
 和 `global:crypto:COINBASE:BTC-USDT`。服务端不会在两个交易所之间自动回退或混合价格。
 
@@ -169,17 +178,34 @@ curl --fail --silent --show-error http://127.0.0.1:8765/v1/health
 
 #### 配置银河证券星耀数智 AmazingData Provider
 
-AmazingData 是可选商业数据提供方。仓库不分发其 SDK、手册或凭据。请从获授权的银河证券渠道取得匹配 Python 版本的 AmazingData 和 TGW wheel，并先确认账号协议允许服务端使用、本地缓存、AI 处理、多用户展示及 API 输出。
+AmazingData 是可选商业数据提供方。请从获授权的银河证券渠道取得匹配 Python 版本的 AmazingData 和 TGW wheel，并先确认账号协议允许服务端使用、本地缓存、AI 处理、多用户展示及 API 输出。SDK、手册和凭据均不得提交到公开 Git 仓库。
 
-TGW 当前包含 Linux x86_64 和 Windows x86_64 原生库；Apple Silicon macOS 不能直接运行真实会话。Linux x86_64 部署示例：
+本机已取得的安装包和手册可统一放在下面的目录，方便安装和升级：
+
+```text
+vendor/amazingdata-sdk/
+├── AmazingData-1.1.9-cp314-none-any.whl
+├── tgw-1.0.9.2-py3-none-any.whl
+└── AmazingData-manual.pdf
+```
+
+`vendor/amazingdata-sdk/` 已被 `.gitignore` 忽略；克隆仓库不会自动得到这些文件，需要从获授权渠道单独复制。
+
+当前 AmazingData 1.1.9 wheel 包含 Python 3.14 字节码，TGW 1.0.9.2 wheel 包含 Linux/Windows x86_64 的原生库。因此真实会话需要 x86_64 主机和 CPython 3.14；Apple Silicon macOS 不能直接运行。Linux x86_64 安装示例：
 
 ```shell
-python3 -m venv providers/amazingdata-python/.venv
-providers/amazingdata-python/.venv/bin/python -m pip install \
-  /secure/path/to/tgw-wheel.whl \
-  /secure/path/to/AmazingData-wheel.whl \
+uv python install 3.14
+uv venv --python 3.14 providers/amazingdata-python/.venv
+uv pip install --python providers/amazingdata-python/.venv/bin/python \
+  ./vendor/amazingdata-sdk/tgw-1.0.9.2-py3-none-any.whl \
+  ./vendor/amazingdata-sdk/AmazingData-1.1.9-cp314-none-any.whl \
   ./providers/amazingdata-python
+
+providers/amazingdata-python/.venv/bin/python -c \
+  'import AmazingData, tgw; print("AmazingData SDK import: OK")'
 ```
+
+如果使用 `uv` 管理生产 Python，请确保虚拟环境指向服务用户可读取的运行时目录；不要让 `/opt/.../.venv/bin/python` 指向只有 root 可以进入的 `/root/.local/...`。
 
 配置只记录环境变量名和非敏感路径：
 
@@ -208,6 +234,28 @@ AMAZINGDATA_PORT=<vendor-port>
 ```
 
 Provider 使用一个长期运行的 Python sidecar 维持单一登录会话；超时或取消会终止异常会话，下次请求自动重新登录。原始行情柱继续写入 EVA 的 DuckDB，SDK 必需的内部缓存仅位于 `cachePath`。
+
+> [!IMPORTANT]
+> 安装 SDK 和成功登录不等于数据权限已经开通。仿真账号若仅授权“基础行情 Level-1 股票快照”，只能按手册使用 `SubscribeData.register(..., Period.snapshot.value)` 验证交易时段内的实时股票快照；`MarketData.query_snapshot()` 属于历史快照查询，不应拿它代替实时订阅验权。交易日历、历史快照、分钟/日线、复权因子和指数成分需要对应权限。
+
+正式加入生产配置前，应在 x86_64 测试环境中依次完成以下真实 SDK 验收：
+
+1. 登录并退出，不在日志中输出账号、密码或登录 Token。
+2. 获取 A 股目录。
+3. 在交易时段订阅单只 A 股 Level-1 快照并收到回调。
+4. 分别验证交易日历、历史快照、分钟线、日线、复权因子和指数成分。
+5. 验证超时会终止异常 sidecar，且 EVA 能回退到其他数据提供方。
+6. 验收全部通过后，才将 `providers.amazingdata` 写入生产配置并重启服务；仿真账号或权限不完整的账号保持禁用。
+
+启用后执行：
+
+```shell
+sudo systemctl restart evatickd
+sudo systemctl is-active evatickd
+curl --fail --silent --show-error http://127.0.0.1:8765/v1/health
+```
+
+然后登录管理中心的“数据源管理”页面，确认 AmazingData 已出现，并分别检查股票和指数类别。只有目录与实际数据查询均成功，才算数据提供方上线完成。
 
 ### 4. 启动服务
 
