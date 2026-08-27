@@ -38,6 +38,7 @@ describe('CLI API key authentication', () => {
       const pageHtml = await page.text()
       expect(pageHtml).toContain('EVA 管理中心')
       expect(pageHtml).toContain('API 密钥')
+      expect(pageHtml).not.toContain('<h1')
       expect(pageHtml).toContain('复制')
       expect(pageHtml).toContain('公开访问（免密钥）')
 

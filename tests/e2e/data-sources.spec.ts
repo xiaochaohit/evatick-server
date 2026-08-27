@@ -150,6 +150,7 @@ describe('data source management', () => {
       expect(pageResponse.headers.get('content-type')).toContain('text/html')
       const page = await pageResponse.text()
       expect(page).toContain('数据源管理')
+      expect(page).not.toContain('<h1')
       expect(page).toContain('获取顺序与健康度')
       expect(page).toContain('id="save-order"')
       expect(page).toContain('点击保存后生效')

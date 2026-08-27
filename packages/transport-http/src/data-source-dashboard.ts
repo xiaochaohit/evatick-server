@@ -44,11 +44,8 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
       mask-image: linear-gradient(to bottom, black, transparent 78%);
     }
     ${adminNavigationStyles}
-    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 48px 0 64px; position: relative; }
-    header { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; margin-bottom: 28px; }
-    .eyebrow { color: var(--green); font: 500 12px/1 "DM Mono", monospace; letter-spacing: .16em; text-transform: uppercase; margin-bottom: 14px; }
-    h1 { margin: 0; font-size: clamp(34px, 5vw, 58px); line-height: 1.05; letter-spacing: -.04em; }
-    .subtitle { margin: 13px 0 0; color: var(--muted); max-width: 570px; line-height: 1.7; }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 64px; position: relative; }
+    .status-row { display: flex; justify-content: flex-end; margin-bottom: 12px; }
     .live { display: flex; align-items: center; gap: 9px; color: var(--muted); font: 500 12px "DM Mono", monospace; white-space: nowrap; }
     .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 6px rgba(20,122,85,.12); animation: pulse 2s infinite; }
     .overview { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
@@ -116,8 +113,7 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
       .source .datum { display: none; }
     }
     @media (max-width: 560px) {
-      .shell { width: min(100% - 24px, 1180px); padding-top: 32px; }
-      header { align-items: flex-start; flex-direction: column; gap: 18px; }
+      .shell { width: min(100% - 24px, 1180px); padding-top: 20px; }
       .overview { grid-template-columns: 1fr 1fr; gap: 8px; }
       .metric { padding: 16px; }
       .metric-value { font-size: 23px; }
@@ -133,14 +129,9 @@ export const dataSourceDashboardHtml = String.raw`<!doctype html>
 <body>
   ${adminNavigation('sources')}
   <main class="shell">
-    <header>
-      <div>
-        <div class="eyebrow">EVA / DATA OPERATIONS</div>
-        <h1>数据源管理</h1>
-        <p class="subtitle">每种数据类型维护独立的获取顺序，并持续检测上游健康度。排在前面的来源会优先使用，失败时自动向后回退。</p>
-      </div>
+    <div class="status-row">
       <div class="live"><span class="live-dot"></span><span id="updated">正在连接服务</span></div>
-    </header>
+    </div>
 
     <section class="overview">
       <article class="metric"><div class="metric-label">分类检测项</div><div class="metric-value" id="total">—</div></article>

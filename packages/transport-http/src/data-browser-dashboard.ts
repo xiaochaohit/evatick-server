@@ -13,12 +13,8 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
     body { margin:0; min-height:100vh; color:var(--ink); font-family:"Noto Sans SC",sans-serif; background:radial-gradient(circle at 14% 5%,rgba(47,142,111,.16),transparent 30rem),radial-gradient(circle at 88% 74%,rgba(41,112,90,.10),transparent 30rem),var(--paper); }
     body::before { content:""; position:fixed; inset:0; pointer-events:none; background-image:linear-gradient(rgba(137,193,175,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(137,193,175,.025) 1px,transparent 1px); background-size:32px 32px; mask-image:linear-gradient(black,transparent 82%); }
     ${adminNavigationStyles}
-    .shell { position:relative; width:min(1180px,calc(100% - 40px)); margin:auto; padding:48px 0 70px; }
-    header { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:28px; }
-    .eyebrow { color:var(--green); font:500 12px "DM Mono",monospace; letter-spacing:.16em; margin-bottom:12px; }
-    h1 { margin:0; font-size:clamp(36px,5vw,58px); line-height:1; letter-spacing:-.045em; }
-    .subtitle { color:var(--muted); line-height:1.7; max-width:700px; margin:15px 0 0; }
-    .warehouse { color:var(--green); font:500 12px "DM Mono",monospace; text-align:right; }
+    .shell { position:relative; width:min(1180px,calc(100% - 40px)); margin:auto; padding:28px 0 70px; }
+    .warehouse { padding:10px 20px; color:var(--green); background:#0a1713; border-bottom:1px solid var(--line); font:500 11px "DM Mono",monospace; text-align:right; }
     .panel { border:1px solid var(--line); border-radius:22px; background:var(--card); box-shadow:var(--shadow); overflow:hidden; backdrop-filter:blur(18px); animation:rise .5s both; }
     .toolbar { display:flex; align-items:center; gap:12px; padding:18px 20px; border-bottom:1px solid var(--line); }
     .search { position:relative; flex:1; }
@@ -67,15 +63,15 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
     .chart-tooltip { position:absolute; z-index:2; max-width:calc(100% - 24px); padding:8px 10px; border:1px solid var(--line); border-radius:8px; color:var(--ink); background:rgba(7,17,15,.92); box-shadow:0 8px 24px rgba(0,0,0,.25); font:500 10px/1.6 "DM Mono",monospace; white-space:nowrap; pointer-events:none; transform:translate(12px,12px); }
     .bar-pager { border-top:1px solid var(--line); }
     @keyframes rise { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
-    @media(max-width:800px) { .toolbar{align-items:stretch;flex-direction:column}.filters button{flex:1}.filters{width:100%}header{align-items:flex-start;flex-direction:column}.warehouse{text-align:left}.hide-mobile{display:none}.detail-controls{grid-template-columns:1fr 1fr}.coverage-grid{grid-template-columns:1fr 1fr}.chart-wrap,.chart-wrap canvas{height:360px;min-height:360px} }
-    @media(max-width:520px) { .shell{width:calc(100% - 24px);padding-top:32px}th,td{padding:12px}.identity{min-width:145px}.pager{align-items:flex-start;flex-direction:column}.pager-actions{width:100%}.pager-actions button{flex:1}.detail-controls{grid-template-columns:1fr}.coverage-grid{grid-template-columns:1fr}.chart-wrap,.chart-wrap canvas{height:320px;min-height:320px} }
+    @media(max-width:800px) { .toolbar{align-items:stretch;flex-direction:column}.filters button{flex:1}.filters{width:100%}.warehouse{text-align:left}.hide-mobile{display:none}.detail-controls{grid-template-columns:1fr 1fr}.coverage-grid{grid-template-columns:1fr 1fr}.chart-wrap,.chart-wrap canvas{height:360px;min-height:360px} }
+    @media(max-width:520px) { .shell{width:calc(100% - 24px);padding-top:20px}th,td{padding:12px}.identity{min-width:145px}.pager{align-items:flex-start;flex-direction:column}.pager-actions{width:100%}.pager-actions button{flex:1}.detail-controls{grid-template-columns:1fr}.coverage-grid{grid-template-columns:1fr}.chart-wrap,.chart-wrap canvas{height:320px;min-height:320px} }
   </style>
 </head>
 <body>
   ${adminNavigation('home')}
   <main class="shell">
-    <header><div><div class="eyebrow">EVA LOCAL WAREHOUSE</div><h1>数据浏览</h1><p class="subtitle">严格只读本地 DuckDB，展示日线与 1 分钟行情的实际范围和记录数量；此页面不会触发远程回退。</p></div><div class="warehouse" id="warehouse">正在连接本地仓库</div></header>
     <section class="panel">
+      <div class="warehouse" id="warehouse">正在连接本地仓库</div>
       <div class="toolbar"><div class="search"><input id="query" type="search" placeholder="输入代码或名称，例如 000001、IF2609、XAU、BTC-USDT" autocomplete="off"></div><div class="filters"><button class="filter active" data-type="" data-market="">全部</button><button class="filter" data-type="equity" data-market="">股票</button><button class="filter" data-type="index" data-market="">指数</button><button class="filter" data-type="future" data-market="CN">国内期货</button><button class="filter" data-type="future" data-market="GLOBAL">国际期货</button><button class="filter" data-type="crypto" data-market="">加密货币</button></div><div class="filters"><button class="period-filter active" data-interval="">全部周期</button><button class="period-filter" data-interval="1d">日线</button><button class="period-filter" data-interval="1m">1分钟</button></div></div>
       <div class="table-wrap" id="list"><div class="empty">正在读取库内标的…</div></div><div class="pager"><span id="summary">—</span><div class="pager-actions"><button id="previous" disabled>上一页</button><button id="next" disabled>下一页</button></div></div>
     </section>
