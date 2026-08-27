@@ -93,7 +93,11 @@ export class ApiKeyAuth {
 
   install(app: FastifyInstance): void {
     app.addHook('onRequest', async (request, reply) => {
-      if (!this.enabled || !this.isCliPath(request.url.split('?', 1)[0])) return
+      const path = request.url.split('?', 1)[0]
+      const localDataWithBearer =
+        path.startsWith('/v1/local-data') && Boolean(extractBearerToken(request))
+      if (!this.enabled || (!this.isCliPath(path) && !localDataWithBearer))
+        return
       await this.ready
       if (this.configuredAccessMode === 'public') return
       const token = extractBearerToken(request)

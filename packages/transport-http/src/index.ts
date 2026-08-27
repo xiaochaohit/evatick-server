@@ -145,13 +145,14 @@ export class EvaHttpService extends Service {
         })
     })
 
+    this.apiKeyAuth = new ApiKeyAuth(this.config.apiKeysPath)
     this.adminAuth = new AdminAuth({
       username: this.config.adminUsername,
       initialPassword: this.config.adminPassword,
       credentialsPath: this.config.adminCredentialsPath,
+      allowApiKeyForLocalData: this.apiKeyAuth.enabled,
     })
     this.adminAuth.install(this.app)
-    this.apiKeyAuth = new ApiKeyAuth(this.config.apiKeysPath)
     this.apiKeyAuth.install(this.app)
 
     const routingOptions = {

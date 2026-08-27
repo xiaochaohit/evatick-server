@@ -43,6 +43,7 @@ export interface AdminAuthOptions {
   initialPassword?: string
   credentialsPath?: string
   sessionTtlMs?: number
+  allowApiKeyForLocalData?: boolean
 }
 
 function parseCookies(header: string | undefined): Map<string, string> {
@@ -106,6 +107,12 @@ export class AdminAuth {
       await this.ready
       const path = request.url.split('?', 1)[0]
       if (!this.isProtectedPath(path)) return
+      if (
+        this.options.allowApiKeyForLocalData &&
+        path.startsWith('/v1/local-data') &&
+        request.headers.authorization?.startsWith('Bearer ')
+      )
+        return
       if (this.authenticate(request)) return
       if (path.startsWith('/admin')) {
         return reply.redirect(`/admin/login?next=${encodeURIComponent(request.url)}`)

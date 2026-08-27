@@ -57,6 +57,24 @@ describe('CLI API key authentication', () => {
       })
       expect(accepted.status).toBe(200)
 
+      const localData = await fetch(
+        `${first.url}/v1/local-data/instruments?interval=1d&limit=20&offset=0`,
+        { headers: { authorization: `Bearer ${key}` } },
+      )
+      expect(localData.status).toBe(200)
+      expect(await localData.json()).toMatchObject({
+        schema: 'eva.local-instrument-list.v1',
+        data: [],
+        meta: { local_only: true },
+      })
+      expect(
+        (
+          await fetch(`${first.url}/v1/local-data/instruments`, {
+            headers: { authorization: 'Bearer invalid-key' },
+          })
+        ).status,
+      ).toBe(401)
+
       const listed = await fetch(`${first.url}/v1/api-keys`, { headers: { cookie } })
       const listedBody = await listed.json()
       expect(listedBody).toMatchObject({
