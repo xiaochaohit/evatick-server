@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 
 import SwaggerParser from '@apidevtools/swagger-parser'
+import { createEvaTickServer } from '@evatick/server'
 import { describe, expect, it } from 'vitest'
 
 describe('public HTTP contract', () => {
@@ -39,5 +40,26 @@ describe('public HTTP contract', () => {
     expect(
       paths['/v1/indices/{instrument_id}/constituents']?.get?.operationId,
     ).toBe('getIndexConstituents')
+  })
+
+  it('serves the contract and interactive documentation', async () => {
+    const server = await createEvaTickServer()
+
+    try {
+      const [contractResponse, docsResponse] = await Promise.all([
+        fetch(`${server.url}/openapi.json`),
+        fetch(`${server.url}/docs/`),
+      ])
+      const contract = (await contractResponse.json()) as Record<string, unknown>
+
+      expect(contractResponse.status).toBe(200)
+      expect(contract.openapi).toBe('3.1.0')
+      expect(Reflect.get(contract, 'paths')).toHaveProperty('/v1/health')
+      expect(docsResponse.status).toBe(200)
+      expect(docsResponse.headers.get('content-type')).toContain('text/html')
+      expect(await docsResponse.text()).toContain('Swagger UI')
+    } finally {
+      await server.close()
+    }
   })
 })

@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { Service, type Context } from '@deepseek-ai/cordis'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify'
 
 import {
@@ -76,6 +80,9 @@ function isInstrumentType(value: unknown): value is InstrumentType {
 }
 
 const FUTURES_SERIES_ID_PATTERN = /^cn:future-series:[^:]+:[^:]+:main$/
+const OPENAPI_CONTRACT_PATH = fileURLToPath(
+  new URL('../../../contracts/openapi/evatick-api-v1.yaml', import.meta.url),
+)
 
 export class EvaHttpService extends Service {
   static inject = ['marketProviderRegistry', 'marketCatalogStore']
@@ -107,6 +114,26 @@ export class EvaHttpService extends Service {
   ) {
     super(ctx, 'evaHttp')
     this.app = Fastify({ logger: false })
+
+    this.app.register(swagger, {
+      mode: 'static',
+      specification: {
+        path: OPENAPI_CONTRACT_PATH,
+        baseDir: dirname(OPENAPI_CONTRACT_PATH),
+      },
+    })
+    this.app.register(swaggerUi, {
+      routePrefix: '/docs',
+      staticCSP: true,
+      uiConfig: {
+        deepLinking: true,
+        docExpansion: 'list',
+        persistAuthorization: true,
+      },
+    })
+    this.app.get('/openapi.json', { schema: { hide: true } }, async () =>
+      this.app.swagger(),
+    )
 
     this.app.setNotFoundHandler((_request, reply) => reply
       .code(404)

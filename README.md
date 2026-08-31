@@ -315,6 +315,9 @@ curl --get --fail --silent --show-error \
 ## HTTP API
 
 [OpenAPI 3.1 契约](contracts/openapi/evatick-api-v1.yaml)是客户端集成的协议源。
+服务启动后可访问 [http://127.0.0.1:8765/docs/](http://127.0.0.1:8765/docs/)
+在 Swagger UI 中浏览和调试全部接口；机器可读的运行时契约位于
+[`/openapi.json`](http://127.0.0.1:8765/openapi.json)。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
