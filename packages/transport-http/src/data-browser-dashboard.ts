@@ -86,8 +86,11 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
   </main>
   <script>
     const byId=(id)=>document.getElementById(id);const esc=(v)=>String(v).replace(/[&<>'"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-    const state={query:'',type:'',market:'',interval:'',offset:0,limit:30,total:0,selectedId:'',detailInterval:'1m',detailDate:'',barOffset:0,barLimit:500,barTotal:0,barRows:[],barViewportStart:0,barViewportSize:120,barView:'chart',hoveredBar:-1,chartDrag:null,loadingOlder:false};let timer,barsController,coverageController,chartFrame;
+    const state={query:'',type:'',market:'',interval:'',offset:0,limit:30,total:0,selectedId:'',detailInterval:'1m',detailDate:'',barOffset:0,barLimit:500,barTotal:0,barRows:[],barViewportStart:0,barViewportSize:120,barView:'chart',hoveredBar:-1,chartDrag:null,loadingOlder:false};let timer,barsController,olderBarsController,coverageController,chartFrame,barRequestVersion=0;
     async function request(url,options){const response=await fetch(url,options);const body=await response.json();if(!response.ok)throw new Error(body.detail||'请求失败');return body;}
+    function barRequestContext(){return JSON.stringify([state.selectedId,state.detailInterval,state.detailDate]);}
+    function cancelBarRequests(){barRequestVersion+=1;barsController?.abort();olderBarsController?.abort();barsController=null;olderBarsController=null;state.loadingOlder=false;}
+    function barsAreChronological(rows){return rows.every((bar,index)=>index===0||rows[index-1].period_end<bar.period_end);}
     function formatNumber(value){return Number(value).toLocaleString('zh-CN');}
     function formatBytes(value){if(value===null||value===undefined)return '内存数据库';const units=['B','KB','MB','GB','TB'];let size=Number(value),unit=0;while(size>=1024&&unit<units.length-1){size/=1024;unit+=1;}return size.toFixed(unit<2?0:1)+' '+units[unit];}
     function range(first,last){return first&&last?esc(first)+' → '+esc(last):'—';}
@@ -124,9 +127,60 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
     }
     function setBarRows(rows,message){state.barRows=rows.slice().reverse();state.barViewportSize=Math.min(120,state.barRows.length);state.barViewportStart=Math.max(0,state.barRows.length-state.barViewportSize);state.hoveredBar=-1;byId('bar-chart-empty').textContent=message||'所选范围内没有本地记录';byId('bar-chart-tooltip').hidden=true;scheduleChart();}
     function setBarView(view){state.barView=view;document.querySelectorAll('[data-view]').forEach((button)=>{const active=button.dataset.view===view;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});byId('bar-chart').hidden=view!=='chart';byId('bars').hidden=view!=='table';if(view==='chart')scheduleChart();}
-    async function loadBars(){if(!state.selectedId)return;if(barsController)barsController.abort();barsController=new AbortController();const signal=barsController.signal;const params=new URLSearchParams({interval:state.detailInterval,limit:String(state.barLimit),offset:'0'});if(state.detailDate){params.set('start',state.detailDate);params.set('end',state.detailDate);}byId('bars').innerHTML='<div class="empty">正在读取本地行情…</div>';setBarRows([],'正在读取本地行情…');try{const body=await request('/v1/local-data/instruments/'+encodeURIComponent(state.selectedId)+'/bars?'+params,{signal});state.barTotal=body.page.total;state.barOffset=0;byId('bars').innerHTML=barTable(body.data);setBarRows(body.data);byId('bar-summary').textContent='已加载 '+formatNumber(body.data.length)+' / '+formatNumber(state.barTotal)+' 条 · 拖动浏览，滚轮缩放';byId('bar-previous').disabled=!body.data.length;byId('bar-next').disabled=Boolean(state.detailDate)||body.data.length>=state.barTotal;}catch(error){if(error.name==='AbortError')return;byId('bars').innerHTML='<div class="empty">'+esc(error.message)+'</div>';setBarRows([],error.message);}}
-    async function loadOlderBars(){if(state.loadingOlder||state.detailDate||state.barRows.length>=state.barTotal)return;state.loadingOlder=true;byId('bar-next').disabled=true;const offset=state.barRows.length,params=new URLSearchParams({interval:state.detailInterval,limit:String(state.barLimit),offset:String(offset)});try{const body=await request('/v1/local-data/instruments/'+encodeURIComponent(state.selectedId)+'/bars?'+params),older=body.data.slice().reverse(),seen=new Set(state.barRows.map((bar)=>bar.period_end)),fresh=older.filter((bar)=>!seen.has(bar.period_end));if(!fresh.length)return;state.barRows=[...fresh,...state.barRows];state.barViewportStart+=fresh.length;byId('bar-summary').textContent='已加载 '+formatNumber(state.barRows.length)+' / '+formatNumber(state.barTotal)+' 条本地记录';scheduleChart();}catch(error){byId('bar-summary').textContent=error.message;}finally{state.loadingOlder=false;byId('bar-next').disabled=state.barRows.length>=state.barTotal;}}
-    async function loadCoverage(setDefaultDate){if(!state.selectedId)return;if(coverageController)coverageController.abort();coverageController=new AbortController();const signal=coverageController.signal;try{const body=await request('/v1/local-data/instruments/'+encodeURIComponent(state.selectedId)+'/coverage?interval='+state.detailInterval,{signal});renderCoverage(body.data);if(setDefaultDate){state.detailDate=state.detailInterval==='1m'?(body.data.actual_end||''):'';byId('detail-date').value=state.detailDate;}state.barOffset=0;await loadBars();}catch(error){if(error.name==='AbortError')return;byId('coverage').innerHTML='<div class="empty">'+esc(error.message)+'</div>';}}
+    async function loadBars(){
+      if(!state.selectedId)return;
+      cancelBarRequests();
+      const requestVersion=barRequestVersion,requestContext=barRequestContext(),instrumentId=state.selectedId;
+      const controller=new AbortController();barsController=controller;
+      const params=new URLSearchParams({interval:state.detailInterval,limit:String(state.barLimit),offset:'0'});
+      if(state.detailDate){params.set('start',state.detailDate);params.set('end',state.detailDate);}
+      byId('bars').innerHTML='<div class="empty">正在读取本地行情…</div>';setBarRows([],'正在读取本地行情…');
+      try{
+        const body=await request('/v1/local-data/instruments/'+encodeURIComponent(instrumentId)+'/bars?'+params,{signal:controller.signal});
+        if(requestVersion!==barRequestVersion||requestContext!==barRequestContext())return;
+        const ordered=body.data.slice().reverse();
+        if(!barsAreChronological(ordered))throw new Error('行情时间顺序异常，请重新加载');
+        state.barTotal=body.page.total;state.barOffset=0;byId('bars').innerHTML=barTable(body.data);setBarRows(body.data);byId('bar-summary').textContent='已加载 '+formatNumber(body.data.length)+' / '+formatNumber(state.barTotal)+' 条 · 拖动浏览，滚轮缩放';byId('bar-previous').disabled=!body.data.length;byId('bar-next').disabled=Boolean(state.detailDate)||body.data.length>=state.barTotal;
+      }catch(error){
+        if(error.name==='AbortError'||requestVersion!==barRequestVersion||requestContext!==barRequestContext())return;
+        byId('bars').innerHTML='<div class="empty">'+esc(error.message)+'</div>';setBarRows([],error.message);
+      }finally{if(barsController===controller)barsController=null;}
+    }
+    async function loadOlderBars(){
+      if(state.loadingOlder||state.detailDate||state.barRows.length>=state.barTotal)return;
+      state.loadingOlder=true;byId('bar-next').disabled=true;
+      const requestVersion=barRequestVersion,requestContext=barRequestContext(),instrumentId=state.selectedId;
+      const controller=new AbortController();olderBarsController=controller;
+      const offset=state.barRows.length,params=new URLSearchParams({interval:state.detailInterval,limit:String(state.barLimit),offset:String(offset)});
+      try{
+        const body=await request('/v1/local-data/instruments/'+encodeURIComponent(instrumentId)+'/bars?'+params,{signal:controller.signal});
+        if(requestVersion!==barRequestVersion||requestContext!==barRequestContext())return;
+        const older=body.data.slice().reverse(),seen=new Set(state.barRows.map((bar)=>bar.period_end)),fresh=older.filter((bar)=>!seen.has(bar.period_end));
+        if(!fresh.length)return;
+        const merged=[...fresh,...state.barRows];
+        if(!barsAreChronological(merged))throw new Error('行情时间顺序异常，请重新加载');
+        state.barRows=merged;state.barViewportStart+=fresh.length;byId('bar-summary').textContent='已加载 '+formatNumber(state.barRows.length)+' / '+formatNumber(state.barTotal)+' 条本地记录';scheduleChart();
+      }catch(error){
+        if(error.name==='AbortError'||requestVersion!==barRequestVersion||requestContext!==barRequestContext())return;
+        byId('bar-summary').textContent=error.message;
+      }finally{
+        if(olderBarsController===controller){olderBarsController=null;state.loadingOlder=false;byId('bar-next').disabled=state.barRows.length>=state.barTotal;}
+      }
+    }
+    async function loadCoverage(setDefaultDate){
+      if(!state.selectedId)return;
+      cancelBarRequests();coverageController?.abort();
+      const requestVersion=barRequestVersion,requestContext=barRequestContext(),instrumentId=state.selectedId,interval=state.detailInterval;
+      const controller=new AbortController();coverageController=controller;
+      try{
+        const body=await request('/v1/local-data/instruments/'+encodeURIComponent(instrumentId)+'/coverage?interval='+interval,{signal:controller.signal});
+        if(requestVersion!==barRequestVersion||requestContext!==barRequestContext())return;
+        renderCoverage(body.data);if(setDefaultDate){state.detailDate=state.detailInterval==='1m'?(body.data.actual_end||''):'';byId('detail-date').value=state.detailDate;}state.barOffset=0;await loadBars();
+      }catch(error){
+        if(error.name==='AbortError'||requestVersion!==barRequestVersion||requestContext!==barRequestContext())return;
+        byId('coverage').innerHTML='<div class="empty">'+esc(error.message)+'</div>';
+      }finally{if(coverageController===controller)coverageController=null;}
+    }
     async function openDetail(id,label,hasMinute,minuteEnd){state.selectedId=id;state.detailInterval=hasMinute?'1m':'1d';state.detailDate=state.detailInterval==='1m'?minuteEnd:'';state.barOffset=0;byId('detail').classList.add('visible');byId('detail-title').textContent=label;byId('detail-id').textContent=id;byId('detail-interval').value=state.detailInterval;byId('detail-date').value=state.detailDate||'';setBarView(state.barView);byId('detail').scrollIntoView({behavior:'smooth',block:'start'});await loadCoverage(false);}
     document.querySelectorAll('[data-view]').forEach((button)=>button.addEventListener('click',()=>setBarView(button.dataset.view)));
     function chartLocalIndex(event){const canvas=event.currentTarget,rect=canvas.getBoundingClientRect(),plotWidth=Math.max(1,rect.width-58-16),relative=Math.max(0,Math.min(plotWidth-1,event.clientX-rect.left-58));return Math.max(0,Math.min(state.barViewportSize-1,Math.floor(relative/plotWidth*state.barViewportSize)));}
@@ -139,7 +193,7 @@ export const dataBrowserDashboardHtml = String.raw`<!doctype html>
     byId('chart-zoom-in').addEventListener('click',()=>zoomChart(.75));byId('chart-zoom-out').addEventListener('click',()=>zoomChart(1.3));
     if('ResizeObserver' in window)new ResizeObserver(scheduleChart).observe(byId('bar-chart'));else window.addEventListener('resize',scheduleChart);
     byId('query').addEventListener('input',(event)=>{clearTimeout(timer);timer=setTimeout(()=>{state.query=event.target.value.trim();state.offset=0;load();},350);});document.querySelectorAll('.filter').forEach((button)=>button.addEventListener('click',()=>{document.querySelectorAll('.filter').forEach((item)=>item.classList.remove('active'));button.classList.add('active');state.type=button.dataset.type;state.market=button.dataset.market;state.offset=0;load();}));document.querySelectorAll('.period-filter').forEach((button)=>button.addEventListener('click',()=>{document.querySelectorAll('.period-filter').forEach((item)=>item.classList.remove('active'));button.classList.add('active');state.interval=button.dataset.interval;state.offset=0;load();}));
-    byId('detail-interval').addEventListener('change',(event)=>{state.detailInterval=event.target.value;state.detailDate='';byId('detail-date').value='';loadCoverage(true);});byId('detail-date').addEventListener('change',(event)=>{state.detailDate=event.target.value;state.barOffset=0;loadBars();});byId('previous').addEventListener('click',()=>{state.offset=Math.max(0,state.offset-state.limit);load();scrollTo({top:0,behavior:'smooth'});});byId('next').addEventListener('click',()=>{state.offset+=state.limit;load();scrollTo({top:0,behavior:'smooth'});});byId('bar-previous').addEventListener('click',()=>clampViewport(state.barRows.length-state.barViewportSize));byId('bar-next').addEventListener('click',loadOlderBars);byId('close-detail').addEventListener('click',()=>byId('detail').classList.remove('visible'));
+    byId('detail-interval').addEventListener('change',(event)=>{state.detailInterval=event.target.value;state.detailDate='';byId('detail-date').value='';loadCoverage(true);});byId('detail-date').addEventListener('change',(event)=>{state.detailDate=event.target.value;state.barOffset=0;loadBars();});byId('previous').addEventListener('click',()=>{state.offset=Math.max(0,state.offset-state.limit);load();scrollTo({top:0,behavior:'smooth'});});byId('next').addEventListener('click',()=>{state.offset+=state.limit;load();scrollTo({top:0,behavior:'smooth'});});byId('bar-previous').addEventListener('click',()=>clampViewport(state.barRows.length-state.barViewportSize));byId('bar-next').addEventListener('click',loadOlderBars);byId('close-detail').addEventListener('click',()=>{cancelBarRequests();coverageController?.abort();byId('detail').classList.remove('visible');});
     load();
   </script>
 </body>

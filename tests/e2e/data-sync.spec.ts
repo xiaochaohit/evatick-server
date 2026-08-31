@@ -569,6 +569,9 @@ describe('local historical data synchronization', () => {
       const browserResponse = await fetch(`${server.url}/admin`)
       expect(browserResponse.status).toBe(200)
       const browserPage = await browserResponse.text()
+      for (const match of browserPage.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+        expect(() => new Function(match[1])).not.toThrow()
+      }
       expect(browserPage).toContain('数据浏览')
       expect(browserPage).not.toContain('<h1')
       expect(browserPage).not.toContain('数据源健康')
@@ -588,6 +591,10 @@ describe('local historical data synchronization', () => {
       expect(browserPage).toContain("byId('bar-chart').addEventListener('wheel'")
       expect(browserPage).toContain('event.preventDefault();event.stopPropagation()')
       expect(browserPage).toContain('loadOlderBars')
+      expect(browserPage).toContain('olderBarsController?.abort()')
+      expect(browserPage).toContain('requestVersion!==barRequestVersion')
+      expect(browserPage).toContain('requestContext!==barRequestContext()')
+      expect(browserPage).toContain('barsAreChronological(merged)')
       expect(browserPage).toContain('data-view="chart"')
       expect(browserPage).toContain('data-view="table"')
       expect(browserPage).toContain('行情柱图')
