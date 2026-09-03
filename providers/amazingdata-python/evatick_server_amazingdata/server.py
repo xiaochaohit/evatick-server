@@ -158,6 +158,7 @@ class AmazingDataSession:
             raise BridgeError("INVALID_CONFIGURATION", "AMAZINGDATA_PORT must be an integer") from error
         self.cache_path = Path(_required_environment("AMAZINGDATA_CACHE_PATH")).resolve()
         self.cache_path.mkdir(parents=True, exist_ok=True)
+        self.cache_directory = f"{self.cache_path}{os.sep}"
         try:
             _sdk_call(sdk.login, username=self.username, password=password, host=host, port=port)
         except Exception as error:
@@ -259,7 +260,7 @@ class AmazingDataSession:
             raise BridgeError("INVALID_PROVIDER_SYMBOL", "providerSymbol must be a non-empty string")
         result = _sdk_call(
             self.base_data.get_backward_factor,
-            [provider_symbol], local_path=str(self.cache_path), is_local=False,
+            [provider_symbol], local_path=self.cache_directory, is_local=False,
         )
         records = _records(result)
         return [
@@ -275,7 +276,7 @@ class AmazingDataSession:
         info_data = _sdk_call(self.sdk.InfoData)
         result = _sdk_call(
             info_data.get_index_constituent,
-            [provider_symbol], local_path=str(self.cache_path), is_local=False,
+            [provider_symbol], local_path=self.cache_directory, is_local=False,
         )
         if not isinstance(result, dict):
             raise BridgeError(

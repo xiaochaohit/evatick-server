@@ -32,6 +32,8 @@ class _Period:
 
 
 class _BaseData:
+    factor_paths: list[str] = []
+
     def get_code_info(self, security_type: str):
         print("SDK progress must not reach protocol stdout")
         if security_type == "EXTRA_STOCK_A":
@@ -42,6 +44,7 @@ class _BaseData:
         return [20260824, 20260825]
 
     def get_backward_factor(self, code_list, local_path: str, is_local: bool):
+        self.factor_paths.append(local_path)
         return _Frame([{"index": "2026-08-25", code_list[0]: 1.25}])
 
 
@@ -96,7 +99,10 @@ class _MarketData:
 
 
 class _InfoData:
+    constituent_paths: list[str] = []
+
     def get_index_constituent(self, code_list, local_path: str, is_local: bool):
+        self.constituent_paths.append(local_path)
         return {code_list[0]: [{
             "INDEX_CODE": code_list[0],
             "CON_CODE": "600000.SH",
@@ -131,6 +137,8 @@ class AmazingDataProtocolTest(unittest.TestCase):
         FakeAmazingData.logins.clear()
         FakeAmazingData.logout_calls = 0
         _MarketData.kline_calls.clear()
+        _BaseData.factor_paths.clear()
+        _InfoData.constituent_paths.clear()
 
     def test_serves_multiple_requests_from_one_authenticated_session(self) -> None:
         requests = [
@@ -173,6 +181,9 @@ class AmazingDataProtocolTest(unittest.TestCase):
             responses[4]["data"][0],
         )
         self.assertEqual("600000.SH", responses[5]["data"][0]["CON_CODE"])
+        expected_cache = f"{Path('/tmp/amazingdata-test-cache').resolve()}{os.sep}"
+        self.assertEqual([expected_cache], _BaseData.factor_paths)
+        self.assertEqual([expected_cache], _InfoData.constituent_paths)
         self.assertTrue(responses[6]["ok"])
         self.assertEqual(1, FakeAmazingData.logout_calls)
 
