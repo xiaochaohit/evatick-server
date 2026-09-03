@@ -33,9 +33,10 @@ class _Period:
 
 class _BaseData:
     def get_code_info(self, security_type: str):
+        print("SDK progress must not reach protocol stdout")
         if security_type == "EXTRA_STOCK_A":
-            return [{"code": "600000.SH", "symbol": "浦发银行", "security_status": 1}]
-        return [{"code": "000300.SH", "symbol": "沪深300", "security_status": 1}]
+            return [{"code_market": "600000.SH", "symbol": "浦发银行", "security_status": 1}]
+        return [{"code_market": "000300.SH", "symbol": "沪深300", "security_status": 1}]
 
     def get_calendar(self):
         return [20260824, 20260825]
@@ -80,7 +81,7 @@ class _MarketData:
 
     def query_snapshot(self, code_list, begin_date: int, end_date: int):
         return {
-            code_list[0]: [{
+            str(begin_date): {code_list[0]: _Frame([{
                 "code": code_list[0],
                 "trade_time": "2026-08-25T15:00:00+08:00",
                 "last": 10.2,
@@ -90,7 +91,7 @@ class _MarketData:
                 "pre_close": 10.0,
                 "volume": 1200,
                 "amount": 12240.0,
-            }],
+            }])},
         }
 
 
@@ -117,6 +118,7 @@ class FakeAmazingData:
 
     @classmethod
     def login(cls, **credentials):
+        print("SDK token: do-not-leak")
         cls.logins.append(credentials)
 
     @classmethod
@@ -153,12 +155,14 @@ class AmazingDataProtocolTest(unittest.TestCase):
             "AMAZINGDATA_CACHE_PATH": "/tmp/amazingdata-test-cache",
         }
 
-        with patch.dict(os.environ, environment, clear=True):
+        diagnostics = io.StringIO()
+        with patch.dict(os.environ, environment, clear=True), patch("sys.stdout", diagnostics):
             serve(input_stream, output_stream, sdk=FakeAmazingData)
 
         responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
         self.assertEqual(1, len(FakeAmazingData.logins))
         self.assertNotIn("password", json.dumps(responses))
+        self.assertEqual("", diagnostics.getvalue())
         self.assertEqual({"records": 1}, responses[0]["data"])
         self.assertEqual("equity", responses[1]["data"][0]["type"])
         self.assertEqual("index", responses[1]["data"][1]["type"])

@@ -7,6 +7,7 @@ name = "evatick-server-amazingdata"
 version = "0.1.0"
 description = "Persistent AmazingData provider bridge for EVA"
 requires-python = ">=3.10"
+dependencies = ["tables>=3.10.2"]
 
 [tool.setuptools.packages.find]
 include = ["evatick_server_amazingdata*"]

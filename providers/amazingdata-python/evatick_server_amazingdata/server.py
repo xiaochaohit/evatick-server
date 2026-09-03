@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import math
 import os
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
@@ -95,6 +97,26 @@ def _records(value: Any) -> list[dict[str, Any]]:
     return [converted] if isinstance(converted, dict) else []
 
 
+def _sdk_call(function: Any, *args: Any, **kwargs: Any) -> Any:
+    # AmazingData writes login tokens and progress messages to stdout. The
+    # sidecar owns stdout as its NDJSON protocol, so provider output must never
+    # be allowed to corrupt the stream or leak session credentials to callers.
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        return function(*args, **kwargs)
+
+
+def _symbol_records(value: Any, provider_symbol: str) -> list[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return []
+    if provider_symbol in value:
+        return _records(value[provider_symbol])
+    for nested in value.values():
+        rows = _symbol_records(nested, provider_symbol)
+        if rows:
+            return rows
+    return []
+
+
 def _date_value(value: str | None, fallback: date) -> date:
     if value is None:
         return fallback
@@ -137,15 +159,15 @@ class AmazingDataSession:
         self.cache_path = Path(_required_environment("AMAZINGDATA_CACHE_PATH")).resolve()
         self.cache_path.mkdir(parents=True, exist_ok=True)
         try:
-            sdk.login(username=self.username, password=password, host=host, port=port)
+            _sdk_call(sdk.login, username=self.username, password=password, host=host, port=port)
         except Exception as error:
             raise BridgeError("PROVIDER_LOGIN_FAILED", "AmazingData login failed", True) from error
-        self.base_data = sdk.BaseData()
-        self.market_data = sdk.MarketData(self.base_data.get_calendar())
+        self.base_data = _sdk_call(sdk.BaseData)
+        self.market_data = _sdk_call(sdk.MarketData, _sdk_call(self.base_data.get_calendar))
 
     def close(self) -> None:
         try:
-            self.sdk.logout(self.username)
+            _sdk_call(self.sdk.logout, self.username)
         except Exception:
             pass
 
@@ -153,7 +175,7 @@ class AmazingDataSession:
         operation = request.get("operation")
         if operation == "health":
             security_type = "EXTRA_INDEX_A" if request.get("category") == "index" else "EXTRA_STOCK_A"
-            rows = _records(self.base_data.get_code_info(security_type=security_type))
+            rows = _records(_sdk_call(self.base_data.get_code_info, security_type=security_type))
             return {"records": len(rows)}
         if operation == "list_instruments":
             return self._list_instruments()
@@ -175,8 +197,8 @@ class AmazingDataSession:
             ("equity", "EXTRA_STOCK_A"),
             ("index", "EXTRA_INDEX_A"),
         ):
-            for row in _records(self.base_data.get_code_info(security_type=security_type)):
-                code = row.get("code") or row.get("index")
+            for row in _records(_sdk_call(self.base_data.get_code_info, security_type=security_type)):
+                code = row.get("code_market") or row.get("code") or row.get("index")
                 name = row.get("symbol") or row.get("security_name") or row.get("name")
                 if code and name:
                     instruments.append({
@@ -206,7 +228,8 @@ class AmazingDataSession:
         rows: list[dict[str, Any]] = []
         maximum_days = 366 if interval == "1d" else 5
         for window_start, window_end in _date_windows(start, end, maximum_days):
-            result = self.market_data.query_kline(
+            result = _sdk_call(
+                self.market_data.query_kline,
                 [provider_symbol],
                 begin_date=_date_number(window_start),
                 end_date=_date_number(window_end),
@@ -222,18 +245,20 @@ class AmazingDataSession:
         if not isinstance(provider_symbol, str) or not provider_symbol:
             raise BridgeError("INVALID_PROVIDER_SYMBOL", "providerSymbol must be a non-empty string")
         today = _date_number(_today_in_shanghai())
-        result = self.market_data.query_snapshot(
+        result = _sdk_call(
+            self.market_data.query_snapshot,
             [provider_symbol], begin_date=today, end_date=today,
         )
         if not isinstance(result, dict):
             raise BridgeError("PROVIDER_INVALID_RESPONSE", "AmazingData snapshot result is not a dictionary")
-        return _records(result.get(provider_symbol))
+        return _symbol_records(result, provider_symbol)
 
     def _adjustment_factors(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         provider_symbol = request.get("providerSymbol")
         if not isinstance(provider_symbol, str) or not provider_symbol:
             raise BridgeError("INVALID_PROVIDER_SYMBOL", "providerSymbol must be a non-empty string")
-        result = self.base_data.get_backward_factor(
+        result = _sdk_call(
+            self.base_data.get_backward_factor,
             [provider_symbol], local_path=str(self.cache_path), is_local=False,
         )
         records = _records(result)
@@ -247,8 +272,9 @@ class AmazingDataSession:
         provider_symbol = request.get("providerSymbol")
         if not isinstance(provider_symbol, str) or not provider_symbol:
             raise BridgeError("INVALID_PROVIDER_SYMBOL", "providerSymbol must be a non-empty string")
-        info_data = self.sdk.InfoData()
-        result = info_data.get_index_constituent(
+        info_data = _sdk_call(self.sdk.InfoData)
+        result = _sdk_call(
+            info_data.get_index_constituent,
             [provider_symbol], local_path=str(self.cache_path), is_local=False,
         )
         if not isinstance(result, dict):
